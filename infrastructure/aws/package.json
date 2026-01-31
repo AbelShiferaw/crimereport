@@ -1,0 +1,22 @@
+{
+  "name": "@crimereport/infrastructure",
+  "version": "1.0.0",
+  "description": "CrImEreport AWS CDK Infrastructure",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all",
+    "destroy": "cdk destroy --all"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.124.0",
+    "constructs": "^10.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.16",
+    "typescript": "^5.3.3",
+    "aws-cdk": "^2.124.0"
+  }
+}

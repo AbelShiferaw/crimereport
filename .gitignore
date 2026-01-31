@@ -1,0 +1,72 @@
+# ===== Flutter / Dart =====
+*.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.iml
+.metadata
+
+# iOS
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/ephemeral/
+**/ios/Flutter/Generated.xcconfig
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
+
+# Android
+**/.gradle/
+**/android/local.properties
+**/android/*.iml
+**/android/key.properties
+**/android/**/*.keystore
+
+# macOS
+**/macos/Flutter/ephemeral/
+**/macos/Flutter/GeneratedPluginRegistrant.swift
+
+# ===== Node.js / Backend =====
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# ===== AWS CDK / Infrastructure =====
+cdk.out/
+.cdk.staging/
+
+# ===== Environment & Secrets =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Logs =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== Testing =====
+coverage/
+*.lcov
+
+# ===== Misc =====
+*.bak
+*.tmp
+*.temp
