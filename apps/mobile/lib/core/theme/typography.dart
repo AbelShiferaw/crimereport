@@ -154,4 +154,10 @@ class AppTypography {
     color: AppColors.textPrimary,
     letterSpacing: 1.0,
   );
+
+  // ============ Shadow for Video Overlays ============
+  /// Standard shadow for text displayed over videos.
+  static const List<Shadow> videoOverlayShadow = [
+    Shadow(blurRadius: 4, color: Color(0x8A000000)), // Colors.black54
+  ];
 }

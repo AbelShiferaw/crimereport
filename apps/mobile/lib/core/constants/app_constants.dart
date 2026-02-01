@@ -37,4 +37,27 @@ class AppConstants {
   static const int videoPreloadRange = 1; // Preload ±1 videos
   static const int maxCachedVideoControllers = 5;
   static const Duration videoLoadTimeout = Duration(seconds: 15);
+
+  // Feed Overlay UI
+  static const double feedNavBarHeight = 64.0;
+  static const double feedNavBarMargin = 4.0; // Reduced to sit lower
+  static const double feedActionButtonSize = 48.0;
+  static const double feedActionButtonSpacing = 20.0;
+  static const double feedInfoBarRightMargin = 80.0; // Clear action buttons
+
+  // Animations
+  static const Duration heartAnimationDuration = Duration(milliseconds: 800);
+  static const Duration overlayFadeDuration = Duration(milliseconds: 150);
+
+  // Floating Hearts Animation
+  static const Duration floatingHeartDuration = Duration(milliseconds: 1000);
+  static const double heartFloatDistance = 150.0;
+  static const double heartScalePeak = 1.2;
+  static const double heartMaxDrift = 60.0; // Max horizontal drift in pixels
+  static const double heartMaxRotation = 0.5; // Max rotation in radians (~30°)
+
+  // Progress Bar
+  static const double progressBarGestureZoneHeight = 100.0;
+  static const double progressBarHeight = 3.0;
+  static const double progressBarExpandedHeight = 6.0;
 }

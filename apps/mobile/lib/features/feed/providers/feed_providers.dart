@@ -19,3 +19,18 @@ final videoPreloadManagerProvider = Provider<VideoPreloadManager>((ref) {
   ref.onDispose(() => manager.dispose());
   return manager;
 });
+
+/// Tracks which reports the user has upvoted (local state).
+/// TODO: Persist to local storage in Milestone 13, sync with backend later.
+final upvotedReportsProvider = StateProvider<Set<String>>((ref) => {});
+
+/// Helper to toggle upvote state for a report.
+void toggleUpvote(WidgetRef ref, String reportId) {
+  final notifier = ref.read(upvotedReportsProvider.notifier);
+  final current = notifier.state;
+  if (current.contains(reportId)) {
+    notifier.state = {...current}..remove(reportId);
+  } else {
+    notifier.state = {...current, reportId};
+  }
+}
