@@ -1,18 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/theme/theme.dart';
 import '../../data/models/report.dart';
+import '../../providers/feed_providers.dart';
 import '../managers/video_preload_manager.dart';
+import 'double_tap_like_overlay.dart';
+import 'feed_action_buttons.dart';
+import 'feed_info_bar.dart';
 import 'video_error_placeholder.dart';
+import 'video_gesture_controls.dart';
 import 'video_loading_placeholder.dart';
+import 'video_progress_bar.dart';
 
-/// Individual video item in the feed with play/pause controls.
+/// Individual video item in the feed with TikTok-style overlays.
 ///
-/// Handles video playback, buffering states, and user interactions.
-/// Uses [VideoPreloadManager] for efficient controller caching.
-class FeedVideoItem extends StatefulWidget {
+/// Displays a full-screen video with:
+/// - Long-press for 2x speed
+/// - Double-tap for upvote with heart animation
+/// - Tap to pause/play
+/// - Side action buttons (upvote, comment, flag)
+/// - Bottom info bar with crime details
+/// - Seekable progress bar
+class FeedVideoItem extends ConsumerStatefulWidget {
   /// The crime report to display.
   final Report report;
 
@@ -22,29 +34,41 @@ class FeedVideoItem extends StatefulWidget {
   /// Manager for video controller caching and preloading.
   final VideoPreloadManager preloadManager;
 
+  /// Callback when comment button is tapped.
+  final VoidCallback? onCommentTap;
+
   const FeedVideoItem({
     super.key,
     required this.report,
     required this.isActive,
     required this.preloadManager,
+    this.onCommentTap,
   });
 
   @override
-  State<FeedVideoItem> createState() => _FeedVideoItemState();
+  ConsumerState<FeedVideoItem> createState() => _FeedVideoItemState();
 }
 
-class _FeedVideoItemState extends State<FeedVideoItem> {
+class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   VideoPlayerController? _controller;
   bool _isInitialized = false;
   bool _isBuffering = false;
   bool _hasError = false;
   String? _errorMessage;
-  bool _showPauseIcon = false;
+  bool _isPaused = false;
 
   @override
   void initState() {
     super.initState();
     _initializeVideo();
+  }
+
+  /// Calculate bottom padding to clear the floating nav bar.
+  double _getNavBarClearance(BuildContext context) {
+    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
+    return AppConstants.feedNavBarHeight +
+        bottomSafeArea +
+        AppConstants.feedNavBarMargin;
   }
 
   Future<void> _initializeVideo() async {
@@ -94,7 +118,6 @@ class _FeedVideoItemState extends State<FeedVideoItem> {
       setState(() => _isBuffering = isBuffering);
     }
 
-    // Check for playback errors
     if (_controller!.value.hasError) {
       setState(() {
         _hasError = true;
@@ -113,6 +136,7 @@ class _FeedVideoItemState extends State<FeedVideoItem> {
     if (widget.isActive && !oldWidget.isActive) {
       _controller!.seekTo(Duration.zero);
       _controller!.play();
+      setState(() => _isPaused = false);
     }
     // Pause when becoming inactive
     else if (!widget.isActive && oldWidget.isActive) {
@@ -132,20 +156,33 @@ class _FeedVideoItemState extends State<FeedVideoItem> {
 
     if (_controller!.value.isPlaying) {
       _controller!.pause();
-      setState(() => _showPauseIcon = true);
+      setState(() => _isPaused = true);
     } else {
       _controller!.play();
-      setState(() => _showPauseIcon = false);
+      setState(() => _isPaused = false);
     }
+  }
 
-    // Auto-hide pause icon after delay
-    if (_showPauseIcon) {
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted && _controller?.value.isPlaying == true) {
-          setState(() => _showPauseIcon = false);
-        }
-      });
+  /// Called on double-tap - only adds likes, never removes.
+  /// Heart animation plays regardless.
+  void _handleDoubleTapLike() {
+    final upvoted = ref.read(upvotedReportsProvider);
+    if (!upvoted.contains(widget.report.id)) {
+      ref.read(upvotedReportsProvider.notifier).state = {
+        ...upvoted,
+        widget.report.id,
+      };
     }
+  }
+
+  /// Called on upvote button tap - toggles like on/off.
+  void _handleUpvoteButtonTap() {
+    toggleUpvote(ref, widget.report.id);
+  }
+
+  void _handleFlag() {
+    // TODO: Implement in Milestone 20 (Report CRUD) - show flag/report dialog
+    debugPrint('Flag tapped for report: ${widget.report.id}');
   }
 
   void _retryLoad() {
@@ -159,66 +196,104 @@ class _FeedVideoItemState extends State<FeedVideoItem> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: _togglePlayPause,
-      child: Container(
-        color: AppColors.background,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            // Main content: video, loading, or error
-            if (_hasError)
-              VideoErrorPlaceholder(
-                message: _errorMessage,
-                onRetry: _retryLoad,
-              )
-            else if (_isInitialized && _controller != null)
-              _buildVideoPlayer()
-            else
-              const VideoLoadingPlaceholder(),
+    final isUpvoted =
+        ref.watch(upvotedReportsProvider).contains(widget.report.id);
+    final navBarClearance = _getNavBarClearance(context);
 
-            // Buffering indicator (overlay)
-            if (_isBuffering && !_hasError)
-              const Center(
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2,
+    return Container(
+      color: AppColors.background,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Layer 1: Video or placeholder
+          if (_hasError)
+            VideoErrorPlaceholder(
+              message: _errorMessage,
+              onRetry: _retryLoad,
+            )
+          else if (_isInitialized && _controller != null)
+            _buildVideoPlayer()
+          else
+            const VideoLoadingPlaceholder(),
+
+          // Layer 2: Gesture handlers (long-press → double-tap → tap)
+          if (_isInitialized && !_hasError)
+            VideoGestureControls(
+              controller: _controller,
+              child: DoubleTapLikeOverlay(
+                onDoubleTap: _handleDoubleTapLike,
+                child: GestureDetector(
+                  onTap: _togglePlayPause,
+                  behavior: HitTestBehavior.opaque,
+                  child: const SizedBox.expand(),
                 ),
               ),
+            ),
 
-            // Play/pause icon overlay
-            if (!_hasError && _isInitialized && _shouldShowPlayIcon())
-              _buildPlayPauseOverlay(),
-          ],
-        ),
-      ),
-    );
-  }
+          // Layer 3: Buffering indicator
+          if (_isBuffering && !_hasError)
+            const Center(
+              child: CircularProgressIndicator(
+                color: Colors.white,
+                strokeWidth: 2,
+              ),
+            ),
 
-  bool _shouldShowPlayIcon() {
-    if (_controller == null) return false;
-    return _showPauseIcon || !_controller!.value.isPlaying;
-  }
+          // Layer 4: Pause icon (shown when paused)
+          // IgnorePointer lets taps pass through to gesture layer behind
+          if (!_hasError && _isInitialized && _isPaused)
+            IgnorePointer(
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: const BoxDecoration(
+                    color: Color(0x80000000), // 50% black
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.play_arrow_rounded,
+                    color: Colors.white,
+                    size: 48,
+                  ),
+                ),
+              ),
+            ),
 
-  Widget _buildPlayPauseOverlay() {
-    final isPlaying = _controller?.value.isPlaying ?? false;
+          // Layer 5: Progress bar with large gesture zone (behind UI elements)
+          // The visual bar is at the bottom, gesture zone extends upward 100px
+          // Positioned BEFORE buttons/info so they receive taps
+          if (_isInitialized && !_hasError)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: navBarClearance,
+              child: VideoProgressBar(
+                controller: _controller,
+                // Uses defaults from AppConstants
+              ),
+            ),
 
-    return Center(
-      child: AnimatedOpacity(
-        opacity: _showPauseIcon || !isPlaying ? 0.9 : 0.0,
-        duration: const Duration(milliseconds: 200),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: const BoxDecoration(
-            color: Color(0x80000000), // 50% black
-            shape: BoxShape.circle,
+          // Layer 6: Side action buttons (right side)
+            Positioned(
+            right: 12,
+            bottom: navBarClearance + 100,
+            child: FeedActionButtons(
+              report: widget.report,
+              isUpvoted: isUpvoted,
+              onUpvote: _handleUpvoteButtonTap,
+              onComment: widget.onCommentTap,
+              onFlag: _handleFlag,
+            ),
           ),
-          child: Icon(
-            isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-            color: Colors.white,
-            size: 48,
+
+          // Layer 7: Bottom info bar (left side)
+          Positioned(
+            left: 16,
+            right: AppConstants.feedInfoBarRightMargin,
+            bottom: navBarClearance + 20,
+            child: FeedInfoBar(report: widget.report),
           ),
-        ),
+        ],
       ),
     );
   }
