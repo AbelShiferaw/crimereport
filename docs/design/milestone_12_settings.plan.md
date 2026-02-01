@@ -49,6 +49,12 @@ class SettingsScreen extends StatelessWidget {
             onTap: () => _showPrivacyInfo(context),
           ),
           _SettingsTile(
+            icon: Icons.bug_report_outlined,
+            title: 'Send Crash Reports',
+            subtitle: 'Help improve the app anonymously',
+            trailing: _CrashReportingToggle(),  // Default: OFF
+          ),
+          _SettingsTile(
             icon: Icons.delete_outline,
             title: 'Clear My Data',
             subtitle: 'Delete all local data',
@@ -236,18 +242,62 @@ void _showPrivacyInfo(BuildContext context) {
 }
 ```
 
+### 6. Crash Reporting Toggle
+```dart
+// Opt-in crash reporting - disabled by default for privacy
+class _CrashReportingToggle extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isEnabled = ref.watch(crashReportingEnabledProvider);
+    
+    return Switch(
+      value: isEnabled,
+      activeColor: Colors.red,
+      onChanged: (value) async {
+        ref.read(crashReportingEnabledProvider.notifier).state = value;
+        
+        // Enable/disable Crashlytics collection
+        await FirebaseCrashlytics.instance
+            .setCrashlyticsCollectionEnabled(value);
+        
+        // Persist preference
+        await ref.read(sharedPrefsProvider)
+            .setBool('crash_reporting_enabled', value);
+      },
+    );
+  }
+}
+
+// Provider - defaults to FALSE (privacy-first)
+final crashReportingEnabledProvider = StateProvider<bool>((ref) => false);
+```
+
+**What gets sent when enabled:**
+- Device type (e.g., "iPhone 14")
+- OS version (e.g., "iOS 17.2")  
+- App version (e.g., "1.0.0")
+- Stack trace (where crash occurred)
+
+**What is NEVER sent:**
+- User location
+- Report content
+- Device ID
+- Any personally identifiable information
+
 ## Deliverable Checklist
 - [ ] Settings screen displays all sections
 - [ ] Notification toggle works (saves preference)
 - [ ] Alert radius picker shows options
 - [ ] Privacy info dialog explains anonymity
+- [ ] **Crash reporting toggle (default OFF)**
 - [ ] Clear data shows confirmation
 - [ ] App version displays correctly
 - [ ] External links open (Terms, Privacy, Support)
 - [ ] Anonymous ID displayed (hashed)
 - [ ] Clean, consistent styling
 
-## Files (3 total)
+## Files (4 total)
 1. `lib/features/settings/presentation/settings_screen.dart` - Update
 2. `lib/features/settings/presentation/widgets/settings_tile.dart` - Create
-3. `lib/shared/providers/settings_providers.dart` - Create (notification prefs)
+3. `lib/shared/providers/settings_providers.dart` - Create (notification + crash reporting prefs)
+4. `lib/core/services/logger_service.dart` - Create (crash reporting wrapper)

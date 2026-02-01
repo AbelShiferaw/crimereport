@@ -32,4 +32,9 @@ class AppConstants {
 
   // Cache
   static const int nearbyReportsCacheTTL = 60; // seconds
+
+  // Video Feed
+  static const int videoPreloadRange = 1; // Preload ±1 videos
+  static const int maxCachedVideoControllers = 5;
+  static const Duration videoLoadTimeout = Duration(seconds: 15);
 }
