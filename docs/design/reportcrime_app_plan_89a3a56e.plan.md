@@ -850,6 +850,11 @@ lib/
 - Media EXIF data stripped on device
 - Location only shared when user submits report
 - Clear privacy policy explaining data handling
+- **Crash reporting is opt-in** (disabled by default)
+  - Users can enable in Settings → Privacy → "Send Crash Reports"
+  - Only anonymous data sent: device type, OS version, stack trace
+  - No location, user content, or identifiable information included
+  - Uses Firebase Crashlytics with collection disabled until user opts in
 
 ---
 
