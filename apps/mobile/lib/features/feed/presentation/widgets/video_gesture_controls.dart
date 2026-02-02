@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/theme/theme.dart';
 
 /// Handles long-press gesture for 2x speed playback.
 ///
@@ -36,6 +37,11 @@ class _VideoGestureControlsState extends State<VideoGestureControls> {
     try {
       // Haptic feedback when 2x speed activates (like TikTok)
       HapticFeedback.mediumImpact();
+
+      // If video is paused, play it (user clearly wants to see content)
+      if (!widget.controller!.value.isPlaying) {
+        widget.controller!.play();
+      }
       
       widget.controller!.setPlaybackSpeed(2.0);
       setState(() => _isFastForwarding = true);
@@ -86,28 +92,27 @@ class _VideoGestureControlsState extends State<VideoGestureControls> {
                 opacity: _isFastForwarding ? 1.0 : 0.0,
                 duration: AppConstants.overlayFadeDuration,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm + AppSpacing.xxs,
+                    vertical: AppSpacing.xs + AppSpacing.xxs,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0x99000000), // 60% black
-                    borderRadius: BorderRadius.circular(16),
+                    color: AppColors.overlayDark,
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
                   ),
-                  child: const Row(
+                  child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
                         Icons.fast_forward_rounded,
-                        color: Colors.white,
-                        size: 16,
+                        color: AppColors.textPrimary,
+                        size: AppSpacing.iconSm,
                       ),
-                      SizedBox(width: 4),
+                      SizedBox(width: AppSpacing.xs),
                       Text(
                         '2x',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
+                        style: AppTypography.labelSmall.copyWith(
+                          color: AppColors.textPrimary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),

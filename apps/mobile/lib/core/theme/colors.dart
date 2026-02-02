@@ -44,6 +44,30 @@ class AppColors {
   static const Color shimmerBase = Color(0xFF2A2A2A);
   static const Color shimmerHighlight = Color(0xFF3D3D3D);
 
+  // ============ Overlay & Glass UI Colors ============
+  /// Nav bar background - 50% dark grey, glass-like
+  static const Color navBarBackground = Color(0x80121212);
+  /// 30% black - light overlay for buttons, badges
+  static const Color overlayLight = Color(0x4D000000);
+  /// 50% black - medium overlay for pause icons, modals
+  static const Color overlayMedium = Color(0x80000000);
+  /// 60% black - dark overlay for indicators
+  static const Color overlayDark = Color(0x99000000);
+  /// 80% black - heavy overlay for tooltips, timestamps
+  static const Color overlayHeavy = Color(0xCC000000);
+  /// 8% white - subtle glass border
+  static const Color glassBorder = Color(0x14FFFFFF);
+  /// 30% white - progress bar track
+  static const Color progressTrack = Color(0x4DFFFFFF);
+  /// 70% white - inactive icons on dark backgrounds
+  static const Color iconInactive = Color(0xB4FFFFFF);
+
+  // ============ Shadow Colors ============
+  /// Light shadow for floating elements - 31% black
+  static const Color shadowLight = Color(0x50000000);
+  /// Medium shadow for hearts, overlays - 45% black
+  static const Color shadowMedium = Color(0x73000000);
+
   // ============ Gradient Colors ============
   static const List<Color> primaryGradient = [primary, primaryDark];
   static const List<Color> darkGradient = [Color(0xFF1E1E1E), Color(0xFF121212)];

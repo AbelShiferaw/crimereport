@@ -108,20 +108,20 @@ class _ActionButton extends StatelessWidget {
               width: AppConstants.feedActionButtonSize,
               height: AppConstants.feedActionButtonSize,
               decoration: BoxDecoration(
-                color: const Color(0x4D000000), // 30% black
+                color: AppColors.overlayLight,
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 icon,
                 color: color,
-                size: 28,
+                size: AppSpacing.iconLg - AppSpacing.xs,
               ),
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: AppSpacing.xs),
             Text(
               label,
               style: AppTypography.labelMedium.copyWith(
-                color: Colors.white,
+                color: AppColors.textPrimary,
                 fontWeight: FontWeight.w600,
                 shadows: AppTypography.videoOverlayShadow,
               ),

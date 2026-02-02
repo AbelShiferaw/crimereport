@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../../core/constants/app_constants.dart';
-import '../../../../core/theme/typography.dart';
+import '../../../../core/theme/theme.dart';
 
 /// TikTok-style seekable progress bar with large gesture zone.
 ///
@@ -132,20 +132,20 @@ class _VideoProgressBarState extends State<VideoProgressBar> {
                       if (_isDragging)
                         Positioned(
                           left: (progress * width - 30).clamp(0.0, width - 60),
-                          bottom: 20,
+                          bottom: AppSpacing.lg - AppSpacing.xs,
                           child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
+                            padding: EdgeInsets.symmetric(
+                              horizontal: AppSpacing.sm,
+                              vertical: AppSpacing.xs,
                             ),
                             decoration: BoxDecoration(
-                              color: const Color(0xCC000000), // 80% black
-                              borderRadius: BorderRadius.circular(4),
+                              color: AppColors.overlayHeavy,
+                              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                             ),
                             child: Text(
                               _formatTimestamp(previewPosition),
                               style: AppTypography.labelSmall.copyWith(
-                                color: Colors.white,
+                                color: AppColors.textPrimary,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -165,7 +165,7 @@ class _VideoProgressBarState extends State<VideoProgressBar> {
                               // Track (background)
                               Container(
                                 decoration: BoxDecoration(
-                                  color: const Color(0x4DFFFFFF), // 30% white
+                                  color: AppColors.progressTrack,
                                   borderRadius:
                                       BorderRadius.circular(currentBarHeight / 2),
                                 ),
@@ -176,7 +176,7 @@ class _VideoProgressBarState extends State<VideoProgressBar> {
                                 widthFactor: progress.clamp(0.0, 1.0),
                                 child: Container(
                                   decoration: BoxDecoration(
-                                    color: Colors.white,
+                                    color: AppColors.textPrimary,
                                     borderRadius:
                                         BorderRadius.circular(currentBarHeight / 2),
                                   ),
@@ -191,12 +191,12 @@ class _VideoProgressBarState extends State<VideoProgressBar> {
                                   child: Container(
                                     width: 12,
                                     height: 12,
-                                    decoration: const BoxDecoration(
-                                      color: Colors.white,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.textPrimary,
                                       shape: BoxShape.circle,
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Color(0x40000000),
+                                          color: AppColors.shadowLight,
                                           blurRadius: 4,
                                         ),
                                       ],

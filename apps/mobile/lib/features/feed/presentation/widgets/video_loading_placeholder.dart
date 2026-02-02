@@ -37,8 +37,8 @@ class VideoLoadingPlaceholder extends StatelessWidget {
                 width: 120,
                 height: 12,
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(6),
+                  color: AppColors.textPrimary,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMdSm),
                 ),
               ),
             ),

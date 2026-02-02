@@ -48,6 +48,7 @@ class AppConstants {
   // Animations
   static const Duration heartAnimationDuration = Duration(milliseconds: 800);
   static const Duration overlayFadeDuration = Duration(milliseconds: 150);
+  static const Duration navBarAnimationDuration = Duration(milliseconds: 300);
 
   // Floating Hearts Animation
   static const Duration floatingHeartDuration = Duration(milliseconds: 1000);
@@ -60,4 +61,17 @@ class AppConstants {
   static const double progressBarGestureZoneHeight = 100.0;
   static const double progressBarHeight = 3.0;
   static const double progressBarExpandedHeight = 6.0;
+
+  // Map Configuration
+  static const double defaultMapZoom = 14.0;
+  static const double recenterMapZoom = 15.0;
+  static const int locationDistanceFilter = 10; // meters
+  static const Duration locationTimeout = Duration(seconds: 10);
+
+  // Map FAB Positioning
+  static const double mapFabBottomOffset = 100.0;
+
+  // Location Puck
+  static const double locationPuckPulsingRadius = 30.0;
+  static const double locationPuckAccuracyAlpha = 0.2; // 20% opacity
 }

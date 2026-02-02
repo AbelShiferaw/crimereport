@@ -118,6 +118,13 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
       setState(() => _isBuffering = isBuffering);
     }
 
+    // Sync _isPaused with actual controller state
+    // This handles cases where other widgets (like VideoGestureControls) play/pause
+    final isCurrentlyPaused = !_controller!.value.isPlaying;
+    if (isCurrentlyPaused != _isPaused) {
+      setState(() => _isPaused = isCurrentlyPaused);
+    }
+
     if (_controller!.value.hasError) {
       setState(() {
         _hasError = true;
@@ -134,13 +141,30 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
 
     // Play when becoming active
     if (widget.isActive && !oldWidget.isActive) {
-      _controller!.seekTo(Duration.zero);
-      _controller!.play();
-      setState(() => _isPaused = false);
+      // Only play if feed tab is also active
+      final isFeedTabActive = ref.read(isFeedTabActiveProvider);
+      if (isFeedTabActive) {
+        _controller!.seekTo(Duration.zero);
+        _controller!.play();
+        setState(() => _isPaused = false);
+      }
     }
     // Pause when becoming inactive
     else if (!widget.isActive && oldWidget.isActive) {
       _controller!.pause();
+    }
+  }
+
+  /// Handles tab visibility changes - pauses video when feed tab is hidden.
+  void _handleTabVisibilityChange(bool isFeedTabActive) {
+    if (_controller == null || !_isInitialized || _hasError) return;
+
+    if (!isFeedTabActive) {
+      // Pause when leaving feed tab
+      _controller!.pause();
+    } else if (widget.isActive && !_isPaused) {
+      // Resume when returning to feed tab (if this is the active video and wasn't manually paused)
+      _controller!.play();
     }
   }
 
@@ -200,6 +224,11 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
         ref.watch(upvotedReportsProvider).contains(widget.report.id);
     final navBarClearance = _getNavBarClearance(context);
 
+    // Listen to tab visibility changes and pause/resume accordingly
+    ref.listen<bool>(isFeedTabActiveProvider, (previous, current) {
+      _handleTabVisibilityChange(current);
+    });
+
     return Container(
       color: AppColors.background,
       child: Stack(
@@ -245,15 +274,15 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
             IgnorePointer(
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: const BoxDecoration(
-                    color: Color(0x80000000), // 50% black
+                  padding: EdgeInsets.all(AppSpacing.lg - AppSpacing.xs),
+                  decoration: BoxDecoration(
+                    color: AppColors.overlayMedium,
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.play_arrow_rounded,
-                    color: Colors.white,
-                    size: 48,
+                    color: AppColors.textPrimary,
+                    size: AppSpacing.iconXl,
                   ),
                 ),
               ),

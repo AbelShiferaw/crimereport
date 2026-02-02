@@ -25,21 +25,24 @@ class FeedInfoBar extends StatelessWidget {
       children: [
         // Crime type badge (color-coded)
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          padding: EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm + AppSpacing.xxs,
+            vertical: AppSpacing.xs,
+          ),
           decoration: BoxDecoration(
             color: report.type.color,
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
           ),
           child: Text(
             report.type.displayName.toUpperCase(),
             style: AppTypography.labelSmall.copyWith(
-              color: Colors.white,
+              color: AppColors.textPrimary,
               fontWeight: FontWeight.bold,
               letterSpacing: 0.5,
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        SizedBox(height: AppSpacing.sm),
 
         // Description (max 2 lines)
         Text(
@@ -47,7 +50,7 @@ class FeedInfoBar extends StatelessWidget {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: AppTypography.bodyMedium.copyWith(
-            color: Colors.white,
+            color: AppColors.textPrimary,
             height: 1.3,
             shadows: AppTypography.videoOverlayShadow,
           ),

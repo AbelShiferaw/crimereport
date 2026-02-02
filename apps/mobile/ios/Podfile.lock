@@ -9,6 +9,18 @@ PODS:
     - FlutterMacOS
   - image_picker_ios (0.0.1):
     - Flutter
+  - mapbox_maps_flutter (2.18.0):
+    - Flutter
+    - MapboxMaps (= 11.18.0)
+    - Turf (= 4.0.0)
+  - MapboxCommon (24.18.0):
+    - Turf (= 4.0.0)
+  - MapboxCoreMaps (11.18.0):
+    - MapboxCommon (= 24.18.0)
+  - MapboxMaps (11.18.0):
+    - MapboxCommon (= 24.18.0)
+    - MapboxCoreMaps (= 11.18.0)
+    - Turf (= 4.0.0)
   - permission_handler_apple (9.3.0):
     - Flutter
   - shared_preferences_foundation (0.0.1):
@@ -17,6 +29,7 @@ PODS:
   - sqflite_darwin (0.0.4):
     - Flutter
     - FlutterMacOS
+  - Turf (4.0.0)
   - video_player_avfoundation (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -27,10 +40,18 @@ DEPENDENCIES:
   - flutter_secure_storage (from `.symlinks/plugins/flutter_secure_storage/ios`)
   - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
   - image_picker_ios (from `.symlinks/plugins/image_picker_ios/ios`)
+  - mapbox_maps_flutter (from `.symlinks/plugins/mapbox_maps_flutter/ios`)
   - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
   - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
   - sqflite_darwin (from `.symlinks/plugins/sqflite_darwin/darwin`)
   - video_player_avfoundation (from `.symlinks/plugins/video_player_avfoundation/darwin`)
+
+SPEC REPOS:
+  trunk:
+    - MapboxCommon
+    - MapboxCoreMaps
+    - MapboxMaps
+    - Turf
 
 EXTERNAL SOURCES:
   camera_avfoundation:
@@ -43,6 +64,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/geolocator_apple/darwin"
   image_picker_ios:
     :path: ".symlinks/plugins/image_picker_ios/ios"
+  mapbox_maps_flutter:
+    :path: ".symlinks/plugins/mapbox_maps_flutter/ios"
   permission_handler_apple:
     :path: ".symlinks/plugins/permission_handler_apple/ios"
   shared_preferences_foundation:
@@ -58,11 +81,16 @@ SPEC CHECKSUMS:
   flutter_secure_storage: 1ed9476fba7e7a782b22888f956cce43e2c62f13
   geolocator_apple: ab36aa0e8b7d7a2d7639b3b4e48308394e8cef5e
   image_picker_ios: e0ece4aa2a75771a7de3fa735d26d90817041326
+  mapbox_maps_flutter: 2ebdee9cbabc4c093fecbdeca179f9e01cbabfd6
+  MapboxCommon: 7dc22ef3ccd162e54b28ddf97e9a6a293a72875c
+  MapboxCoreMaps: fa266f524b2ab0c4d4c76d94db6411b243969b37
+  MapboxMaps: e8a15728a4600e9fef4e11a29bc21c4bf9c4cbc3
   permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
   shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
   sqflite_darwin: 20b2a3a3b70e43edae938624ce550a3cbf66a3d0
+  Turf: c9eb11a65d96af58cac523460fd40fec5061b081
   video_player_avfoundation: dd410b52df6d2466a42d28550e33e4146928280a
 
-PODFILE CHECKSUM: 3c63482e143d1b91d2d2560aee9fb04ecc74ac7e
+PODFILE CHECKSUM: cbe2ab79fb8c787f7be40d90a13ca87daea15838
 
 COCOAPODS: 1.16.2

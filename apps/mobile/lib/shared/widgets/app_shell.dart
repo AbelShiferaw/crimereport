@@ -1,21 +1,21 @@
 import 'package:flutter/material.dart';
-import '../../core/theme/theme.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../features/feed/presentation/feed_screen.dart';
+import '../../features/feed/providers/feed_providers.dart';
 import '../../features/map/presentation/map_screen.dart';
 import '../../features/submit/presentation/submit_screen.dart';
 import '../../features/settings/presentation/settings_screen.dart';
 import 'floating_nav_bar.dart';
 
-class AppShell extends StatefulWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
   @override
-  State<AppShell> createState() => _AppShellState();
+  ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
-  int _currentIndex = 0;
-
+class _AppShellState extends ConsumerState<AppShell> {
   final List<Widget> _screens = const [
     FeedScreen(),
     MapScreen(),
@@ -46,19 +46,26 @@ class _AppShellState extends State<AppShell> {
     ),
   ];
 
+  void _onTabChanged(int index) {
+    // Update the provider so other widgets (like FeedVideoItem) know
+    ref.read(appTabIndexProvider.notifier).state = index;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final currentIndex = ref.watch(appTabIndexProvider);
+
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: Colors.transparent,
       body: Stack(
         children: [
           // Screen content
-          IndexedStack(index: _currentIndex, children: _screens),
+          IndexedStack(index: currentIndex, children: _screens),
 
           // Floating nav bar
           FloatingNavBar(
-            currentIndex: _currentIndex,
-            onTap: (index) => setState(() => _currentIndex = index),
+            currentIndex: currentIndex,
+            onTap: _onTabChanged,
             items: _navItems,
           ),
         ],

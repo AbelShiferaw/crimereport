@@ -121,14 +121,14 @@ class _DoubleTapLikeOverlayState extends State<DoubleTapLikeOverlay>
                       scale: scale,
                       child: Transform.rotate(
                         angle: heart.rotation,
-                        child: const Icon(
+                        child: Icon(
                           Icons.favorite,
                           color: AppColors.primary,
                           size: 80,
                           shadows: [
                             Shadow(
                               blurRadius: 10,
-                              color: Color(0x73000000), // black45
+                              color: AppColors.shadowMedium,
                             ),
                           ],
                         ),
