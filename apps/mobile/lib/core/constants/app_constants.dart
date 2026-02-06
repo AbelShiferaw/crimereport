@@ -74,4 +74,21 @@ class AppConstants {
   // Location Puck
   static const double locationPuckPulsingRadius = 30.0;
   static const double locationPuckAccuracyAlpha = 0.2; // 20% opacity
+
+  // Map Markers
+  static const double mapMarkerSize = 72.0; // Increased from 52 for better visibility
+  static const double mapMarkerBorderWidth = 4.0;
+
+  // Map Marker Pulse Animation
+  /// Minimum radius for pulse animation (slightly larger than marker)
+  static const double markerPulseMinRadius = 28.0;
+
+  /// Maximum radius for pulse expansion
+  static const double markerPulseMaxRadius = 44.0;
+
+  /// Maximum opacity for pulse (fades to 0 as it expands)
+  static const double markerPulseMaxOpacity = 0.35;
+
+  /// Interval between animation frames
+  static const Duration markerPulseInterval = Duration(milliseconds: 50);
 }

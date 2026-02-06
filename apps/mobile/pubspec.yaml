@@ -44,6 +44,10 @@ dependencies:
   cached_network_image: ^3.3.1
   shimmer: ^3.0.0
   
+  # Image Processing
+  flutter_cache_manager: ^3.4.1
+  image: ^4.5.4
+  
   # Navigation
   google_nav_bar: ^5.0.6
   
@@ -63,3 +67,4 @@ flutter:
   
   assets:
     - .env
+    - assets/markers/

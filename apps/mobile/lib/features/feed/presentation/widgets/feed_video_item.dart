@@ -56,6 +56,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   bool _hasError = false;
   String? _errorMessage;
   bool _isPaused = false;
+  bool _wasPlayingBeforeTabSwitch = false;
 
   @override
   void initState() {
@@ -160,10 +161,11 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
     if (_controller == null || !_isInitialized || _hasError) return;
 
     if (!isFeedTabActive) {
-      // Pause when leaving feed tab
+      // Save playing state BEFORE pausing
+      _wasPlayingBeforeTabSwitch = _controller!.value.isPlaying;
       _controller!.pause();
-    } else if (widget.isActive && !_isPaused) {
-      // Resume when returning to feed tab (if this is the active video and wasn't manually paused)
+    } else if (widget.isActive && _wasPlayingBeforeTabSwitch) {
+      // Resume if it was playing before tab switch
       _controller!.play();
     }
   }
