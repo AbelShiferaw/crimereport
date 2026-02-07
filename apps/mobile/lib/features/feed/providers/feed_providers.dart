@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/constants/app_constants.dart';
 import '../../../shared/data/mock_data_service.dart';
 import '../data/models/report.dart';
 import '../presentation/managers/video_preload_manager.dart';
@@ -14,8 +15,9 @@ final isFeedTabActiveProvider = Provider<bool>((ref) {
 });
 
 /// Provider for feed reports - auto disposes when not used.
-final feedReportsProvider =
-    FutureProvider.autoDispose<List<Report>>((ref) async {
+final feedReportsProvider = FutureProvider.autoDispose<List<Report>>((
+  ref,
+) async {
   return MockDataService.instance.getReportsAsync();
 });
 
@@ -43,3 +45,21 @@ void toggleUpvote(WidgetRef ref, String reportId) {
     notifier.state = {...current, reportId};
   }
 }
+
+/// Provider for reports near a specific location.
+/// Used by LocationFeedScreen when tapping a map marker.
+final locationFeedReportsProvider = Provider.family<List<Report>, Report>((
+  ref,
+  initialReport,
+) {
+  final nearby = MockDataService.instance.getNearbyReports(
+    initialReport.latitude,
+    initialReport.longitude,
+    AppConstants.locationFeedRadiusKm,
+  );
+
+  // Ensure the tapped report is first
+  final reordered = nearby.where((r) => r.id != initialReport.id).toList();
+  reordered.insert(0, initialReport);
+  return reordered;
+});

@@ -37,12 +37,18 @@ class FeedVideoItem extends ConsumerStatefulWidget {
   /// Callback when comment button is tapped.
   final VoidCallback? onCommentTap;
 
+  /// If true, bypasses the tab state check for video playback.
+  /// Use this for screens that are pushed on the navigation stack
+  /// (like LocationFeedScreen) rather than being in the tab system.
+  final bool ignoreTabState;
+
   const FeedVideoItem({
     super.key,
     required this.report,
     required this.isActive,
     required this.preloadManager,
     this.onCommentTap,
+    this.ignoreTabState = false,
   });
 
   @override
@@ -114,23 +120,27 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   void _videoListener() {
     if (!mounted || _controller == null) return;
 
-    final isBuffering = _controller!.value.isBuffering;
-    if (isBuffering != _isBuffering) {
-      setState(() => _isBuffering = isBuffering);
-    }
+    try {
+      final isBuffering = _controller!.value.isBuffering;
+      if (isBuffering != _isBuffering) {
+        setState(() => _isBuffering = isBuffering);
+      }
 
-    // Sync _isPaused with actual controller state
-    // This handles cases where other widgets (like VideoGestureControls) play/pause
-    final isCurrentlyPaused = !_controller!.value.isPlaying;
-    if (isCurrentlyPaused != _isPaused) {
-      setState(() => _isPaused = isCurrentlyPaused);
-    }
+      // Sync _isPaused with actual controller state
+      // This handles cases where other widgets (like VideoGestureControls) play/pause
+      final isCurrentlyPaused = !_controller!.value.isPlaying;
+      if (isCurrentlyPaused != _isPaused) {
+        setState(() => _isPaused = isCurrentlyPaused);
+      }
 
-    if (_controller!.value.hasError) {
-      setState(() {
-        _hasError = true;
-        _errorMessage = 'Playback error';
-      });
+      if (_controller!.value.hasError) {
+        setState(() {
+          _hasError = true;
+          _errorMessage = 'Playback error';
+        });
+      }
+    } catch (_) {
+      // Controller was disposed by LRU eviction - will be re-fetched when needed
     }
   }
 
@@ -138,41 +148,72 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   void didUpdateWidget(FeedVideoItem oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (_controller == null || _hasError) return;
+    if (_controller == null || _hasError || !_isInitialized) return;
 
-    // Play when becoming active
-    if (widget.isActive && !oldWidget.isActive) {
-      // Only play if feed tab is also active
-      final isFeedTabActive = ref.read(isFeedTabActiveProvider);
-      if (isFeedTabActive) {
-        _controller!.seekTo(Duration.zero);
-        _controller!.play();
-        setState(() => _isPaused = false);
+    try {
+      // Play when becoming active
+      if (widget.isActive && !oldWidget.isActive) {
+        // Check if we should play (ignore tab state for pushed screens like LocationFeed)
+        final shouldPlay =
+            widget.ignoreTabState || ref.read(isFeedTabActiveProvider);
+        if (shouldPlay) {
+          _controller!.seekTo(Duration.zero);
+          _controller!.play();
+          setState(() => _isPaused = false);
+        }
       }
+      // Pause when becoming inactive
+      else if (!widget.isActive && oldWidget.isActive) {
+        _controller!.pause();
+      }
+    } catch (_) {
+      // Controller may have been disposed by LRU eviction
+      _handleControllerDisposed();
     }
-    // Pause when becoming inactive
-    else if (!widget.isActive && oldWidget.isActive) {
-      _controller!.pause();
+  }
+
+  /// Handle case where controller was disposed externally (LRU eviction).
+  void _handleControllerDisposed() {
+    if (mounted) {
+      setState(() {
+        _controller = null;
+        _isInitialized = false;
+      });
+      // Re-fetch controller
+      _initializeVideo();
     }
   }
 
   /// Handles tab visibility changes - pauses video when feed tab is hidden.
+  /// Skipped when [ignoreTabState] is true (for pushed screens).
   void _handleTabVisibilityChange(bool isFeedTabActive) {
+    // Skip for pushed screens that don't use tab navigation
+    if (widget.ignoreTabState) return;
+
     if (_controller == null || !_isInitialized || _hasError) return;
 
-    if (!isFeedTabActive) {
-      // Save playing state BEFORE pausing
-      _wasPlayingBeforeTabSwitch = _controller!.value.isPlaying;
-      _controller!.pause();
-    } else if (widget.isActive && _wasPlayingBeforeTabSwitch) {
-      // Resume if it was playing before tab switch
-      _controller!.play();
+    try {
+      if (!isFeedTabActive) {
+        // Save playing state BEFORE pausing
+        _wasPlayingBeforeTabSwitch = _controller!.value.isPlaying;
+        _controller!.pause();
+      } else if (widget.isActive && _wasPlayingBeforeTabSwitch) {
+        // Resume if it was playing before tab switch
+        _controller!.play();
+      }
+    } catch (_) {
+      // Controller may have been disposed by LRU eviction
     }
   }
 
   @override
   void dispose() {
     _controller?.removeListener(_videoListener);
+    try {
+      _controller?.pause();
+    } catch (_) {
+      // Controller may already be disposed by LRU eviction
+    }
     // Don't dispose controller - it's managed by VideoPreloadManager
     super.dispose();
   }
@@ -180,12 +221,17 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   void _togglePlayPause() {
     if (_controller == null || !_isInitialized || _hasError) return;
 
-    if (_controller!.value.isPlaying) {
-      _controller!.pause();
-      setState(() => _isPaused = true);
-    } else {
-      _controller!.play();
-      setState(() => _isPaused = false);
+    try {
+      if (_controller!.value.isPlaying) {
+        _controller!.pause();
+        setState(() => _isPaused = true);
+      } else {
+        _controller!.play();
+        setState(() => _isPaused = false);
+      }
+    } catch (_) {
+      // Controller may have been disposed by LRU eviction
+      _handleControllerDisposed();
     }
   }
 
@@ -222,8 +268,9 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
 
   @override
   Widget build(BuildContext context) {
-    final isUpvoted =
-        ref.watch(upvotedReportsProvider).contains(widget.report.id);
+    final isUpvoted = ref
+        .watch(upvotedReportsProvider)
+        .contains(widget.report.id);
     final navBarClearance = _getNavBarClearance(context);
 
     // Listen to tab visibility changes and pause/resume accordingly
@@ -238,10 +285,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
         children: [
           // Layer 1: Video or placeholder
           if (_hasError)
-            VideoErrorPlaceholder(
-              message: _errorMessage,
-              onRetry: _retryLoad,
-            )
+            VideoErrorPlaceholder(message: _errorMessage, onRetry: _retryLoad)
           else if (_isInitialized && _controller != null)
             _buildVideoPlayer()
           else
@@ -305,7 +349,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
             ),
 
           // Layer 6: Side action buttons (right side)
-            Positioned(
+          Positioned(
             right: 12,
             bottom: navBarClearance + 100,
             child: FeedActionButtons(
@@ -330,22 +374,29 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   }
 
   Widget _buildVideoPlayer() {
-    final controller = _controller!;
-    final size = controller.value.size;
+    if (_controller == null) return const VideoLoadingPlaceholder();
 
-    // Handle case where size is not yet available
-    if (size.width == 0 || size.height == 0) {
+    try {
+      final controller = _controller!;
+      final size = controller.value.size;
+
+      // Handle case where size is not yet available
+      if (size.width == 0 || size.height == 0) {
+        return const VideoLoadingPlaceholder();
+      }
+
+      // Use BoxFit.cover for fullscreen effect (crops landscape videos)
+      return FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: size.width,
+          height: size.height,
+          child: VideoPlayer(controller),
+        ),
+      );
+    } catch (_) {
+      // Controller was disposed by LRU eviction
       return const VideoLoadingPlaceholder();
     }
-
-    // Use BoxFit.cover for fullscreen effect (crops landscape videos)
-    return FittedBox(
-      fit: BoxFit.cover,
-      child: SizedBox(
-        width: size.width,
-        height: size.height,
-        child: VideoPlayer(controller),
-      ),
-    );
   }
 }

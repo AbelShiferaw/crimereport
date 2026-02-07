@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
 
@@ -6,20 +8,24 @@ import '../../data/models/report.dart';
 
 /// Manages video controller preloading and cleanup for smooth scrolling.
 ///
-/// Maintains a pool of video controllers for adjacent videos,
-/// preloading ±[AppConstants.videoPreloadRange] videos and disposing
-/// controllers that are far away to manage memory.
+/// Uses an LRU cache to maintain up to [AppConstants.maxCachedVideoControllers]
+/// controllers. When the cache is full, the least recently used controller
+/// is disposed to make room for new ones.
 class VideoPreloadManager {
-  final Map<String, VideoPlayerController> _controllers = {};
+  /// LRU cache - LinkedHashMap with access order maintains LRU ordering.
+  /// Most recently accessed items are at the end.
+  final LinkedHashMap<String, VideoPlayerController> _controllers =
+      LinkedHashMap<String, VideoPlayerController>();
   final Map<String, Future<VideoPlayerController>> _pendingLoads = {};
 
   /// Get or create a controller for the given URL.
   ///
   /// Returns a cached controller if available, otherwise initializes a new one.
-  /// Controllers are cached and reused for performance.
+  /// Controllers are cached with LRU eviction when cache is full.
   Future<VideoPlayerController> getController(String url) async {
-    // Return existing controller
+    // Return existing controller and mark as recently used
     if (_controllers.containsKey(url)) {
+      _markAsRecentlyUsed(url);
       return _controllers[url]!;
     }
 
@@ -27,6 +33,9 @@ class VideoPreloadManager {
     if (_pendingLoads.containsKey(url)) {
       return _pendingLoads[url]!;
     }
+
+    // Evict LRU controller if cache is full
+    _evictIfNeeded();
 
     // Start new load
     final future = _initializeController(url);
@@ -38,6 +47,24 @@ class VideoPreloadManager {
       return controller;
     } finally {
       _pendingLoads.remove(url);
+    }
+  }
+
+  /// Mark a URL as recently used by moving it to the end of the LinkedHashMap.
+  void _markAsRecentlyUsed(String url) {
+    final controller = _controllers.remove(url);
+    if (controller != null) {
+      _controllers[url] = controller;
+    }
+  }
+
+  /// Evict the least recently used controller if cache is at max capacity.
+  void _evictIfNeeded() {
+    while (_controllers.length >= AppConstants.maxCachedVideoControllers) {
+      final lruUrl = _controllers.keys.first; // First = least recently used
+      final controller = _controllers.remove(lruUrl);
+      controller?.dispose();
+      debugPrint('LRU evicted controller: ${lruUrl.split('/').last}');
     }
   }
 
@@ -59,6 +86,7 @@ class VideoPreloadManager {
   ///
   /// Call this when the page changes to ensure smooth transitions.
   /// Videos within [AppConstants.videoPreloadRange] will be preloaded.
+  /// LRU eviction happens automatically when cache is full.
   void preloadAround(List<Report> reports, int currentIndex) {
     if (reports.isEmpty) return;
 
@@ -77,9 +105,6 @@ class VideoPreloadManager {
         }
       }
     }
-
-    // Cleanup distant controllers
-    _cleanupDistantControllers(reports, currentIndex);
   }
 
   /// Preload a single video in the background.
@@ -92,31 +117,6 @@ class VideoPreloadManager {
       // TODO: Replace with LoggerService when crash reporting is set up
       debugPrint('Failed to preload video: $e');
       // Preload failures are non-critical - don't propagate
-    }
-  }
-
-  void _cleanupDistantControllers(List<Report> reports, int currentIndex) {
-    final keepRange = AppConstants.videoPreloadRange + 1;
-    final keepUrls = <String>{};
-
-    final start = (currentIndex - keepRange).clamp(0, reports.length - 1);
-    final end = (currentIndex + keepRange).clamp(0, reports.length - 1);
-
-    for (int i = start; i <= end; i++) {
-      final media = reports[i].primaryMedia;
-      if (media != null) {
-        keepUrls.add(media.url);
-      }
-    }
-
-    // Dispose controllers not in keep set
-    final urlsToRemove =
-        _controllers.keys.where((url) => !keepUrls.contains(url)).toList();
-
-    for (final url in urlsToRemove) {
-      _controllers[url]?.dispose();
-      _controllers.remove(url);
-      debugPrint('Disposed controller: ${url.split('/').last}');
     }
   }
 

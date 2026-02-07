@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
+import 'dart:math' show pow;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -11,12 +11,15 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/theme.dart';
+import '../../../core/utils/geo_utils.dart';
 import '../../../shared/data/mock_data_service.dart';
 import '../../../shared/widgets/loading_placeholder.dart';
 import '../../../shared/widgets/permission_placeholder.dart';
 import '../../feed/data/models/report.dart';
+import '../../feed/providers/feed_providers.dart';
 import '../providers/map_providers.dart';
 import '../services/marker_image_service.dart';
+import 'location_feed_screen.dart';
 
 /// Layer and source IDs for map markers.
 class _MapLayerIds {
@@ -231,14 +234,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       );
 
       // Filter to only reports within visible bounds
+      final swLat = bounds.southwest.coordinates.lat.toDouble();
+      final swLng = bounds.southwest.coordinates.lng.toDouble();
+      final neLat = bounds.northeast.coordinates.lat.toDouble();
+      final neLng = bounds.northeast.coordinates.lng.toDouble();
+
       final visibleReports = _reports.where((report) {
-        final lat = report.latitude;
-        final lng = report.longitude;
-        final swLat = bounds.southwest.coordinates.lat.toDouble();
-        final swLng = bounds.southwest.coordinates.lng.toDouble();
-        final neLat = bounds.northeast.coordinates.lat.toDouble();
-        final neLng = bounds.northeast.coordinates.lng.toDouble();
-        return lat >= swLat && lat <= neLat && lng >= swLng && lng <= neLng;
+        return GeoUtils.isWithinBounds(
+          lat: report.latitude,
+          lng: report.longitude,
+          swLat: swLat,
+          swLng: swLng,
+          neLat: neLat,
+          neLng: neLng,
+        );
       }).toList();
 
       if (visibleReports.isEmpty) {
@@ -281,7 +290,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final centerLng = center.coordinates.lng.toDouble();
 
     for (final report in reports) {
-      final distance = _haversineDistance(
+      final distance = GeoUtils.distanceMeters(
         centerLat,
         centerLng,
         report.latitude,
@@ -295,28 +304,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
     return closest;
   }
-
-  /// Haversine distance in meters.
-  double _haversineDistance(
-    double lat1,
-    double lng1,
-    double lat2,
-    double lng2,
-  ) {
-    const R = 6371000.0; // Earth radius in meters
-    final dLat = _toRadians(lat2 - lat1);
-    final dLng = _toRadians(lng2 - lng1);
-    final a =
-        sin(dLat / 2) * sin(dLat / 2) +
-        cos(_toRadians(lat1)) *
-            cos(_toRadians(lat2)) *
-            sin(dLng / 2) *
-            sin(dLng / 2);
-    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return R * c;
-  }
-
-  double _toRadians(double deg) => deg * pi / 180;
 
   Future<void> _showFocusPulse(Report report) async {
     if (_pulseManager == null) {
@@ -732,12 +719,23 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   void _onMarkerTapped(Report report) {
     debugPrint('Marker tapped: ${report.type.displayName}');
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${report.type.displayName}: ${report.description}'),
-        backgroundColor: report.type.color,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+    // Start preloading videos BEFORE navigating for faster load times
+    final reports = MockDataService.instance.getNearbyReports(
+      report.latitude,
+      report.longitude,
+      AppConstants.locationFeedRadiusKm,
+    );
+
+    // Reorder so tapped report is first (same logic as provider)
+    final reordered = reports.where((r) => r.id != report.id).toList();
+    reordered.insert(0, report);
+
+    // Start preloading immediately
+    ref.read(videoPreloadManagerProvider).preloadAround(reordered, 0);
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => LocationFeedScreen(initialReport: report),
       ),
     );
   }

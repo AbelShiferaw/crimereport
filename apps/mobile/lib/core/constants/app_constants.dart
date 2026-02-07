@@ -76,7 +76,8 @@ class AppConstants {
   static const double locationPuckAccuracyAlpha = 0.2; // 20% opacity
 
   // Map Markers
-  static const double mapMarkerSize = 72.0; // Increased from 52 for better visibility
+  static const double mapMarkerSize =
+      72.0; // Increased from 52 for better visibility
   static const double mapMarkerBorderWidth = 4.0;
 
   // Map Marker Pulse Animation
@@ -91,4 +92,8 @@ class AppConstants {
 
   /// Interval between animation frames
   static const Duration markerPulseInterval = Duration(milliseconds: 50);
+
+  // Location Feed
+  /// Radius in km for location feed nearby reports.
+  static const double locationFeedRadiusKm = 1.0;
 }

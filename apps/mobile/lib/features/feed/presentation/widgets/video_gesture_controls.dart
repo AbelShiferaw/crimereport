@@ -30,11 +30,11 @@ class _VideoGestureControlsState extends State<VideoGestureControls> {
   bool _isFastForwarding = false;
 
   void _startFastForward() {
-    if (widget.controller == null || !widget.controller!.value.isInitialized) {
-      return;
-    }
+    if (widget.controller == null) return;
 
     try {
+      if (!widget.controller!.value.isInitialized) return;
+
       // Haptic feedback when 2x speed activates (like TikTok)
       HapticFeedback.mediumImpact();
 
@@ -42,11 +42,11 @@ class _VideoGestureControlsState extends State<VideoGestureControls> {
       if (!widget.controller!.value.isPlaying) {
         widget.controller!.play();
       }
-      
+
       widget.controller!.setPlaybackSpeed(2.0);
       setState(() => _isFastForwarding = true);
-    } catch (e) {
-      debugPrint('Failed to set playback speed: $e');
+    } catch (_) {
+      // Controller may have been disposed
     }
   }
 
@@ -55,8 +55,8 @@ class _VideoGestureControlsState extends State<VideoGestureControls> {
 
     try {
       widget.controller!.setPlaybackSpeed(1.0);
-    } catch (e) {
-      debugPrint('Failed to reset playback speed: $e');
+    } catch (_) {
+      // Controller may have been disposed
     }
 
     if (mounted) {

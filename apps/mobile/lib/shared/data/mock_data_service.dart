@@ -1,5 +1,4 @@
-import 'dart:math';
-
+import '../../core/utils/geo_utils.dart';
 import '../../features/feed/data/models/comment.dart';
 import '../../features/feed/data/models/report.dart';
 import 'sample_data.dart';
@@ -38,7 +37,7 @@ class MockDataService {
   List<Report> getNearbyReports(double lat, double lng, double radiusKm) {
     return SampleData.reports
         .map((report) {
-          final distance = _haversineDistance(
+          final distance = GeoUtils.distanceKm(
             lat,
             lng,
             report.latitude,
@@ -94,34 +93,6 @@ class MockDataService {
         .toList()
       ..sort((a, b) => b.upvotes.compareTo(a.upvotes));
   }
-
-  /// Calculate distance between two coordinates using Haversine formula.
-  ///
-  /// Returns distance in kilometers.
-  double _haversineDistance(
-    double lat1,
-    double lon1,
-    double lat2,
-    double lon2,
-  ) {
-    const earthRadiusKm = 6371.0;
-
-    final dLat = _toRadians(lat2 - lat1);
-    final dLon = _toRadians(lon2 - lon1);
-
-    final a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_toRadians(lat1)) *
-            cos(_toRadians(lat2)) *
-            sin(dLon / 2) *
-            sin(dLon / 2);
-
-    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
-
-    return earthRadiusKm * c;
-  }
-
-  /// Convert degrees to radians.
-  double _toRadians(double degrees) => degrees * pi / 180;
 
   /// Simulate network delay for realistic testing.
   Future<List<Report>> getReportsAsync({
