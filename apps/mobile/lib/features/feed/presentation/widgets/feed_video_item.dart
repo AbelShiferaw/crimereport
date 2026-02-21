@@ -7,6 +7,7 @@ import '../../../../core/theme/theme.dart';
 import '../../data/models/report.dart';
 import '../../providers/feed_providers.dart';
 import '../managers/video_preload_manager.dart';
+import 'comments_sheet.dart';
 import 'double_tap_like_overlay.dart';
 import 'feed_action_buttons.dart';
 import 'feed_info_bar.dart';
@@ -34,9 +35,6 @@ class FeedVideoItem extends ConsumerStatefulWidget {
   /// Manager for video controller caching and preloading.
   final VideoPreloadManager preloadManager;
 
-  /// Callback when comment button is tapped.
-  final VoidCallback? onCommentTap;
-
   /// If true, bypasses the tab state check for video playback.
   /// Use this for screens that are pushed on the navigation stack
   /// (like LocationFeedScreen) rather than being in the tab system.
@@ -47,7 +45,6 @@ class FeedVideoItem extends ConsumerStatefulWidget {
     required this.report,
     required this.isActive,
     required this.preloadManager,
-    this.onCommentTap,
     this.ignoreTabState = false,
   });
 
@@ -251,8 +248,27 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
     toggleUpvote(ref, widget.report.id);
   }
 
+  void _showComments() {
+    // Pause video while comments are open
+    if (_isControllerValid() && _controller != null) {
+      _controller!.pause();
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => CommentsSheet(reportId: widget.report.id),
+    ).whenComplete(() {
+      // Resume video when sheet closes
+      if (widget.isActive && _isControllerValid() && _controller != null) {
+        _controller!.play();
+        setState(() => _isPaused = false);
+      }
+    });
+  }
+
   void _handleFlag() {
-    // TODO: Implement in Milestone 20 (Report CRUD) - show flag/report dialog
     debugPrint('Flag tapped for report: ${widget.report.id}');
   }
 
@@ -364,7 +380,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
               report: widget.report,
               isUpvoted: isUpvoted,
               onUpvote: _handleUpvoteButtonTap,
-              onComment: widget.onCommentTap,
+              onComment: _showComments,
               onFlag: _handleFlag,
             ),
           ),

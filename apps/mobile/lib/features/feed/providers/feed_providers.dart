@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/constants/app_constants.dart';
 import '../../../shared/data/mock_data_service.dart';
+import '../data/models/comment.dart';
 import '../data/models/report.dart';
 import '../presentation/managers/video_preload_manager.dart';
 
@@ -43,6 +44,26 @@ void toggleUpvote(WidgetRef ref, String reportId) {
     notifier.state = {...current}..remove(reportId);
   } else {
     notifier.state = {...current, reportId};
+  }
+}
+
+/// Comments for a given report, fetched with simulated network delay.
+final commentsProvider =
+    FutureProvider.autoDispose.family<List<Comment>, String>((ref, reportId) {
+  return MockDataService.instance.getCommentsAsync(reportId);
+});
+
+/// Tracks which comments the user has upvoted (local state).
+final upvotedCommentsProvider = StateProvider<Set<String>>((ref) => {});
+
+/// Helper to toggle upvote state for a comment.
+void toggleCommentUpvote(WidgetRef ref, String commentId) {
+  final notifier = ref.read(upvotedCommentsProvider.notifier);
+  final current = notifier.state;
+  if (current.contains(commentId)) {
+    notifier.state = {...current}..remove(commentId);
+  } else {
+    notifier.state = {...current, commentId};
   }
 }
 
