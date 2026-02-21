@@ -123,7 +123,7 @@ class _DoubleTapLikeOverlayState extends State<DoubleTapLikeOverlay>
                         angle: heart.rotation,
                         child: Icon(
                           Icons.favorite,
-                          color: AppColors.primary,
+                          color: AppColors.accent,
                           size: 80,
                           shadows: [
                             Shadow(

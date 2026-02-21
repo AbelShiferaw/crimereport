@@ -423,13 +423,26 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
         return const VideoLoadingPlaceholder();
       }
 
-      // Use BoxFit.cover for fullscreen effect (crops landscape videos)
-      return FittedBox(
-        fit: BoxFit.cover,
-        child: SizedBox(
-          width: size.width,
-          height: size.height,
-          child: VideoPlayer(controller),
+      final isPortraitVideo = size.height >= size.width;
+
+      if (isPortraitVideo) {
+        return FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: size.width,
+            height: size.height,
+            child: VideoPlayer(controller),
+          ),
+        );
+      }
+
+      return ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: AspectRatio(
+            aspectRatio: size.width / size.height,
+            child: VideoPlayer(controller),
+          ),
         ),
       );
     } catch (_) {

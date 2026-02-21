@@ -45,7 +45,7 @@ class FeedActionButtons extends StatelessWidget {
           icon: Icons.arrow_upward_rounded,
           label: Formatters.count(report.upvotes),
           isActive: isUpvoted,
-          activeColor: AppColors.primary,
+          activeColor: AppColors.accent,
           onTap: onUpvote,
           semanticLabel: 'Upvote. Current count: ${report.upvotes}',
         ),

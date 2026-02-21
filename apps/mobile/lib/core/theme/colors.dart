@@ -6,9 +6,13 @@ class AppColors {
   AppColors._(); // Private constructor to prevent instantiation
 
   // ============ Brand Colors ============
-  static const Color primary = Color(0xFFE53935);
-  static const Color primaryLight = Color(0xFFFF6F60);
-  static const Color primaryDark = Color(0xFFAB000D);
+  static const Color primary = Color(0xFF00897B);
+  static const Color primaryLight = Color(0xFF4DB6AC);
+  static const Color primaryDark = Color(0xFF00695C);
+
+  // ============ Accent Color (Red) ============
+  /// Red accent for hearts, upvotes, recording indicators, and alerts.
+  static const Color accent = Color(0xFFE53935);
 
   // ============ Background Colors ============
   static const Color background = Color(0xFF121212);

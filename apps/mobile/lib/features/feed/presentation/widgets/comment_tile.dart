@@ -81,7 +81,7 @@ class CommentTile extends ConsumerWidget {
                           vertical: 1.5,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.primary,
+                          color: AppColors.accent,
                           borderRadius:
                               BorderRadius.circular(AppSpacing.radiusSm),
                         ),
@@ -127,7 +127,7 @@ class CommentTile extends ConsumerWidget {
                           Icons.arrow_upward_rounded,
                           size: 14,
                           color: isUpvoted
-                              ? AppColors.primary
+                              ? AppColors.accent
                               : AppColors.textTertiary,
                         ),
                         const SizedBox(width: AppSpacing.xs),
@@ -135,7 +135,7 @@ class CommentTile extends ConsumerWidget {
                           '$displayUpvotes',
                           style: AppTypography.caption.copyWith(
                             color: isUpvoted
-                                ? AppColors.primary
+                                ? AppColors.accent
                                 : AppColors.textTertiary,
                             fontWeight: isUpvoted
                                 ? FontWeight.w600

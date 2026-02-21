@@ -543,7 +543,7 @@ class _CameraScreenState extends State<CameraScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: AppColors.primary.withAlpha(200),
+          color: AppColors.accent.withAlpha(200),
           borderRadius: BorderRadius.circular(AppSpacing.radiusRound),
         ),
         child: Row(
@@ -770,7 +770,7 @@ class _CaptureButton extends StatelessWidget {
           height: isRecording ? 32 : 64,
           decoration: BoxDecoration(
             color: mode == CaptureMode.video
-                ? AppColors.primary
+                ? AppColors.accent
                 : Colors.white,
             borderRadius: BorderRadius.circular(isRecording ? 8 : 32),
           ),
