@@ -20,13 +20,15 @@ class MediaPreviewScreen extends StatefulWidget {
   State<MediaPreviewScreen> createState() => _MediaPreviewScreenState();
 }
 
-class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
+class _MediaPreviewScreenState extends State<MediaPreviewScreen>
+    with WidgetsBindingObserver {
   VideoPlayerController? _videoController;
   bool _isVideoReady = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (widget.isVideo) {
       _initVideo();
     }
@@ -46,7 +48,25 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!widget.isVideo) return;
+
+    if (state == AppLifecycleState.inactive) {
+      _videoController?.pause();
+    } else if (state == AppLifecycleState.paused) {
+      _videoController?.dispose();
+      _videoController = null;
+      if (mounted) setState(() => _isVideoReady = false);
+    } else if (state == AppLifecycleState.resumed) {
+      if (_videoController == null) {
+        _initVideo();
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _videoController?.dispose();
     super.dispose();
   }

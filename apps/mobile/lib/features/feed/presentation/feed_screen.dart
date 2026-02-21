@@ -20,11 +20,18 @@ class FeedScreen extends ConsumerStatefulWidget {
 
 class _FeedScreenState extends ConsumerState<FeedScreen> {
   late PageController _pageController;
+  bool _hasInitialPreload = false;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController();
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+      ),
+    );
   }
 
   @override
@@ -51,14 +58,6 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     final reportsAsync = ref.watch(feedReportsProvider);
     final currentIndex = ref.watch(feedCurrentIndexProvider);
 
-    // Ensure status bar is visible with light icons for dark background
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
-      ),
-    );
-
     return Scaffold(
       backgroundColor: AppColors.background,
       extendBodyBehindAppBar: true,
@@ -70,12 +69,14 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
             return _buildEmptyState();
           }
 
-          // Initial preload on first build
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            ref
-                .read(videoPreloadManagerProvider)
-                .preloadAround(reports, currentIndex);
-          });
+          if (!_hasInitialPreload) {
+            _hasInitialPreload = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              ref
+                  .read(videoPreloadManagerProvider)
+                  .preloadAround(reports, currentIndex);
+            });
+          }
 
           return PageView.builder(
             controller: _pageController,

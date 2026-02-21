@@ -34,8 +34,13 @@ class _LocationFeedScreenState extends ConsumerState<LocationFeedScreen>
     super.initState();
     _pageController = PageController();
     WidgetsBinding.instance.addObserver(this);
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+      ),
+    );
 
-    // Trigger initial preload after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final reports = ref.read(
         locationFeedReportsProvider(widget.initialReport),
@@ -71,13 +76,6 @@ class _LocationFeedScreenState extends ConsumerState<LocationFeedScreen>
       locationFeedReportsProvider(widget.initialReport),
     );
     final topPadding = MediaQuery.of(context).padding.top;
-
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
-      ),
-    );
 
     return Scaffold(
       backgroundColor: AppColors.background,

@@ -132,6 +132,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Future<void> _initLocation() async {
     final locationService = ref.read(locationServiceProvider);
 
+    ref.read(locationLoadingProvider.notifier).state = true;
+
     final permission = await locationService.checkPermission();
     ref.read(locationPermissionProvider.notifier).state = permission;
 
@@ -643,11 +645,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         final reportId = feature.properties['reportId'] as String?;
         if (reportId == null) return;
 
-        final report = _reports.firstWhere(
-          (r) => r.id == reportId,
-          orElse: () => _reports.first,
-        );
-        _onMarkerTapped(report);
+        try {
+          final report = _reports.firstWhere((r) => r.id == reportId);
+          _onMarkerTapped(report);
+        } on StateError {
+          debugPrint('No report found for marker: $reportId');
+        }
       },
     );
     _mapboxMap!.addInteraction(

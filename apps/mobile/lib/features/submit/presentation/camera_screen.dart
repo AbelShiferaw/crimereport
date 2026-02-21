@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -28,11 +29,17 @@ class _CameraScreenState extends State<CameraScreen>
 
   CaptureMode _mode = CaptureMode.video;
   bool _isRecording = false;
+  bool _isTakingPhoto = false;
+  bool _isSwitchingCamera = false;
   FlashMode _flashMode = FlashMode.off;
 
   // Recording timer
   Timer? _recordingTimer;
   int _recordingSeconds = 0;
+  static const int _maxRecordingSeconds = 300;
+
+  // Lifecycle recording recovery
+  String? _pendingPreviewPath;
 
   // Zoom
   double _minZoom = 1.0;
@@ -43,6 +50,12 @@ class _CameraScreenState extends State<CameraScreen>
   @override
   void initState() {
     super.initState();
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+      ),
+    );
     WidgetsBinding.instance.addObserver(this);
     _initCamera();
   }
@@ -57,14 +70,59 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-
     if (state == AppLifecycleState.inactive) {
+      if (_controller == null || !_controller!.value.isInitialized) return;
+
+      if (_isRecording) {
+        _finishRecordingAndSave();
+        return;
+      }
+
       _controller?.dispose();
       _controller = null;
       if (mounted) setState(() => _isInitializing = true);
     } else if (state == AppLifecycleState.resumed) {
-      _initCamera();
+      if (_pendingPreviewPath != null) {
+        final path = _pendingPreviewPath!;
+        _pendingPreviewPath = null;
+        _navigateToPreview(path, isVideo: true);
+      } else if (_controller == null) {
+        _initCamera();
+      }
+    }
+  }
+
+  Future<void> _finishRecordingAndSave() async {
+    _recordingTimer?.cancel();
+
+    try {
+      final controller = _controller;
+      if (controller == null) return;
+
+      final file = await controller.stopVideoRecording();
+
+      controller.dispose();
+      _controller = null;
+
+      if (!mounted) return;
+      setState(() {
+        _isRecording = false;
+        _recordingSeconds = 0;
+        _isInitializing = true;
+      });
+
+      _pendingPreviewPath = file.path;
+    } catch (e) {
+      debugPrint('Error finishing recording on lifecycle change: $e');
+      _controller?.dispose();
+      _controller = null;
+      if (mounted) {
+        setState(() {
+          _isInitializing = true;
+          _isRecording = false;
+          _recordingSeconds = 0;
+        });
+      }
     }
   }
 
@@ -130,8 +188,11 @@ class _CameraScreenState extends State<CameraScreen>
   // --- Actions ---
 
   Future<void> _flipCamera() async {
-    if (_cameras.length < 2) return;
+    if (_cameras.length < 2 || _isSwitchingCamera) return;
     HapticFeedback.lightImpact();
+
+    _isSwitchingCamera = true;
+    setState(() {});
 
     final currentDirection = _cameras[_currentCameraIndex].lensDirection;
     final targetDirection = currentDirection == CameraLensDirection.back
@@ -141,10 +202,21 @@ class _CameraScreenState extends State<CameraScreen>
     final targetIndex = _cameras.indexWhere(
       (c) => c.lensDirection == targetDirection,
     );
-    if (targetIndex == -1) return;
+    if (targetIndex == -1) {
+      _isSwitchingCamera = false;
+      setState(() {});
+      return;
+    }
 
     _currentCameraIndex = targetIndex;
+
+    if (targetDirection == CameraLensDirection.front && _flashMode != FlashMode.off) {
+      _flashMode = FlashMode.off;
+    }
+
     await _setupController(_cameras[_currentCameraIndex]);
+    _isSwitchingCamera = false;
+    if (mounted) setState(() {});
   }
 
   Future<void> _toggleFlash() async {
@@ -186,15 +258,21 @@ class _CameraScreenState extends State<CameraScreen>
 
   Future<void> _takePhoto() async {
     if (_controller == null || !_controller!.value.isInitialized) return;
-    if (_controller!.value.isTakingPicture) return;
+    if (_controller!.value.isTakingPicture || _isTakingPhoto) return;
 
     HapticFeedback.mediumImpact();
+    _isTakingPhoto = true;
+    setState(() {});
 
     try {
       final file = await _controller!.takePicture();
+      _isTakingPhoto = false;
       if (!mounted) return;
+      setState(() {});
       _navigateToPreview(file.path, isVideo: false);
     } catch (e) {
+      _isTakingPhoto = false;
+      if (mounted) setState(() {});
       debugPrint('Error taking photo: $e');
     }
   }
@@ -226,7 +304,12 @@ class _CameraScreenState extends State<CameraScreen>
         _recordingSeconds = 0;
       });
       _recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-        setState(() => _recordingSeconds++);
+        _recordingSeconds++;
+        if (_recordingSeconds >= _maxRecordingSeconds) {
+          _stopRecording();
+          return;
+        }
+        setState(() {});
       });
     } catch (e) {
       debugPrint('Error starting recording: $e');
@@ -263,9 +346,11 @@ class _CameraScreenState extends State<CameraScreen>
         ),
       ),
     ).then((result) {
-      // If preview returned 'use', pop back to submit screen with the path
       if (result is Map<String, dynamic>) {
         Navigator.of(context).pop(result);
+      } else {
+        // User chose retake — delete the unused temp file
+        File(filePath).delete().catchError((_) => File(filePath));
       }
     });
   }
@@ -275,6 +360,10 @@ class _CameraScreenState extends State<CameraScreen>
     final s = (seconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
   }
+
+  bool get _isFrontCamera =>
+      _cameras.isNotEmpty &&
+      _cameras[_currentCameraIndex].lensDirection == CameraLensDirection.front;
 
   IconData get _flashIcon {
     switch (_flashMode) {
@@ -306,20 +395,28 @@ class _CameraScreenState extends State<CameraScreen>
 
   @override
   Widget build(BuildContext context) {
-    SystemChrome.setSystemUIOverlayStyle(
-      const SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: Brightness.light,
+    return PopScope(
+      canPop: !_isRecording,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_isRecording) {
+          _finishRecordingAndSave().then((_) {
+            if (mounted && _pendingPreviewPath != null) {
+              final path = _pendingPreviewPath!;
+              _pendingPreviewPath = null;
+              _navigateToPreview(path, isVideo: true);
+            }
+          });
+        }
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: (_isInitializing || _controller == null)
+            ? _buildLoading()
+            : _errorMessage != null
+                ? _buildError()
+                : _buildCamera(),
       ),
-    );
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: _isInitializing
-          ? _buildLoading()
-          : _errorMessage != null
-              ? _buildError()
-              : _buildCamera(),
     );
   }
 
@@ -412,29 +509,30 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Widget _buildTopBar() {
+    final busy = _isRecording || _isTakingPhoto || _isSwitchingCamera;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         // Close
         _CircleButton(
           icon: Icons.close_rounded,
-          onTap: () {
-            if (_isRecording) return;
-            Navigator.of(context).pop();
-          },
+          onTap: busy
+              ? null
+              : () => Navigator.of(context).pop(),
         ),
 
-        // Flash
+        // Flash (hidden for front camera)
         _CircleButton(
           icon: _flashIcon,
           label: _flashLabel,
-          onTap: _isRecording ? null : _toggleFlash,
+          onTap: (busy || _isFrontCamera) ? null : _toggleFlash,
         ),
 
         // Flip camera
         _CircleButton(
           icon: Icons.flip_camera_ios_rounded,
-          onTap: (_isRecording || _cameras.length < 2) ? null : _flipCamera,
+          onTap: (busy || _cameras.length < 2) ? null : _flipCamera,
         ),
       ],
     );

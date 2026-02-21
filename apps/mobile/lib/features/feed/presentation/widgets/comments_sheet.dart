@@ -134,11 +134,26 @@ class _CommentsSheetState extends ConsumerState<CommentsSheet> {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xl),
-        child: Text(
-          'Failed to load comments',
-          style: AppTypography.bodyMedium.copyWith(
-            color: AppColors.textTertiary,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Failed to load comments',
+              style: AppTypography.bodyMedium.copyWith(
+                color: AppColors.textTertiary,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            GestureDetector(
+              onTap: () => ref.invalidate(commentsProvider(widget.reportId)),
+              child: Text(
+                'Tap to retry',
+                style: AppTypography.labelMedium.copyWith(
+                  color: AppColors.primary,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

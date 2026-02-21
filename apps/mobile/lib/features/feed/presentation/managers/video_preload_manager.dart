@@ -43,6 +43,7 @@ class VideoPreloadManager {
 
     try {
       final controller = await future;
+      _evictIfNeeded();
       _controllers[url] = controller;
       return controller;
     } finally {

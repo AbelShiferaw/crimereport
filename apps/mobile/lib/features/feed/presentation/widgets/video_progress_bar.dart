@@ -99,8 +99,13 @@ class _VideoProgressBarState extends State<VideoProgressBar> {
       builder: (context, constraints) {
         final width = constraints.maxWidth;
 
+        final controller = widget.controller!;
+        if (!controller.value.isInitialized) {
+          return SizedBox(height: widget.gestureZoneHeight);
+        }
+
         return ValueListenableBuilder<VideoPlayerValue>(
-          valueListenable: widget.controller!,
+          valueListenable: controller,
           builder: (context, value, _) {
             final progress =
                 _isDragging ? _dragProgress : _calculateProgress(value);

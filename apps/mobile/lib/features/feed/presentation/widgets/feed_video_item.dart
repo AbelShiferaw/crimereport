@@ -61,6 +61,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   String? _errorMessage;
   bool _isPaused = false;
   bool _wasPlayingBeforeTabSwitch = false;
+  bool _isRecovering = false;
 
   @override
   void initState() {
@@ -189,14 +190,13 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
 
   /// Handle case where controller was disposed externally (LRU eviction).
   void _handleControllerDisposed() {
-    if (mounted) {
-      setState(() {
-        _controller = null;
-        _isInitialized = false;
-      });
-      // Re-fetch controller
-      _initializeVideo();
-    }
+    if (!mounted || _isRecovering) return;
+    _isRecovering = true;
+    setState(() {
+      _controller = null;
+      _isInitialized = false;
+    });
+    _initializeVideo().whenComplete(() => _isRecovering = false);
   }
 
   /// Handles tab visibility changes - pauses video when feed tab is hidden.
@@ -310,8 +310,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
 
     final controllerReady = _isInitialized && _controller != null && _isControllerValid();
 
-    // Controller was evicted — trigger async recovery
-    if (_isInitialized && _controller != null && !controllerReady) {
+    if (_isInitialized && _controller != null && !controllerReady && !_isRecovering) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _handleControllerDisposed();
       });

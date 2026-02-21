@@ -66,9 +66,10 @@ class _VideoGestureControlsState extends State<VideoGestureControls> {
 
   @override
   void dispose() {
-    // Reset speed if disposed while fast-forwarding
     if (_isFastForwarding) {
-      widget.controller?.setPlaybackSpeed(1.0);
+      try {
+        widget.controller?.setPlaybackSpeed(1.0);
+      } catch (_) {}
     }
     super.dispose();
   }
