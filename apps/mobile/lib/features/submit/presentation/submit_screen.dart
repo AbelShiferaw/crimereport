@@ -1,10 +1,9 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../../core/theme/theme.dart';
 import 'camera_screen.dart';
+import 'report_details_screen.dart';
 
 class SubmitScreen extends StatefulWidget {
   const SubmitScreen({super.key});
@@ -14,9 +13,6 @@ class SubmitScreen extends StatefulWidget {
 }
 
 class _SubmitScreenState extends State<SubmitScreen> {
-  String? _capturedFilePath;
-  bool _capturedIsVideo = false;
-
   Future<void> _openCamera() async {
     final cameraStatus = await Permission.camera.request();
     final micStatus = await Permission.microphone.request();
@@ -38,10 +34,40 @@ class _SubmitScreenState extends State<SubmitScreen> {
     );
 
     if (result != null && mounted) {
-      setState(() {
-        _capturedFilePath = result['filePath'] as String;
-        _capturedIsVideo = result['isVideo'] as bool;
-      });
+      final filePath = result['filePath'] as String;
+      final isVideo = result['isVideo'] as bool;
+
+      final submitted = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => ReportDetailsScreen(
+            filePath: filePath,
+            isVideo: isVideo,
+          ),
+        ),
+      );
+
+      if (submitted == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  'Report submitted successfully',
+                  style: AppTypography.bodyMedium.copyWith(color: Colors.white),
+                ),
+              ],
+            ),
+            backgroundColor: AppColors.success,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
     }
   }
 
@@ -93,13 +119,6 @@ class _SubmitScreenState extends State<SubmitScreen> {
     );
   }
 
-  void _clearCapture() {
-    setState(() {
-      _capturedFilePath = null;
-      _capturedIsVideo = false;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -108,9 +127,7 @@ class _SubmitScreenState extends State<SubmitScreen> {
         child: Center(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-            child: _capturedFilePath != null
-                ? _buildCapturedState()
-                : _buildEmptyState(),
+            child: _buildEmptyState(),
           ),
         ),
       ),
@@ -176,117 +193,4 @@ class _SubmitScreenState extends State<SubmitScreen> {
     );
   }
 
-  Widget _buildCapturedState() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        // Thumbnail preview
-        ClipRRect(
-          borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-          child: SizedBox(
-            width: 200,
-            height: 260,
-            child: _capturedIsVideo
-                ? Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Container(color: AppColors.surface),
-                      const Center(
-                        child: Icon(
-                          Icons.videocam_rounded,
-                          color: AppColors.textTertiary,
-                          size: 48,
-                        ),
-                      ),
-                      Positioned(
-                        bottom: AppSpacing.sm,
-                        left: AppSpacing.sm,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            borderRadius:
-                                BorderRadius.circular(AppSpacing.radiusSm),
-                          ),
-                          child: const Text(
-                            'VIDEO',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
-                : Image.file(
-                    File(_capturedFilePath!),
-                    fit: BoxFit.cover,
-                  ),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.lg),
-        Text(
-          _capturedIsVideo ? 'Video captured' : 'Photo captured',
-          style: AppTypography.headlineSmall,
-        ),
-        const SizedBox(height: AppSpacing.xs),
-        Text(
-          'Details form coming in next milestone',
-          style: AppTypography.bodySmall.copyWith(color: AppColors.textTertiary),
-        ),
-        const SizedBox(height: AppSpacing.xl),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // Retake
-            GestureDetector(
-              onTap: () {
-                _clearCapture();
-                _openCamera();
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.sm + AppSpacing.xs,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusXxl),
-                  border: Border.all(color: AppColors.divider, width: 0.5),
-                ),
-                child: Text(
-                  'Retake',
-                  style: AppTypography.titleSmall,
-                ),
-              ),
-            ),
-            const SizedBox(width: AppSpacing.md),
-            // Clear
-            GestureDetector(
-              onTap: _clearCapture,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.lg,
-                  vertical: AppSpacing.sm + AppSpacing.xs,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusXxl),
-                ),
-                child: Text(
-                  'Done',
-                  style: AppTypography.titleSmall.copyWith(color: Colors.white),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
 }
