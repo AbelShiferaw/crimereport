@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/theme/theme.dart';
+import 'package:crimereport/core/theme/theme.dart';
 
 /// Error placeholder with retry button when video fails to load.
 class VideoErrorPlaceholder extends StatelessWidget {

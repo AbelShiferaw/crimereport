@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/theme.dart';
-import '../../providers/feed_providers.dart';
-import 'comment_tile.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/feed/providers/feed_providers.dart';
+import 'package:crimereport/features/feed/presentation/widgets/comment_tile.dart';
 
 class CommentsSheet extends ConsumerStatefulWidget {
   final String reportId;
@@ -34,12 +35,12 @@ class _CommentsSheetState extends ConsumerState<CommentsSheet> {
       behavior: HitTestBehavior.opaque,
       onTap: () => Navigator.of(context).pop(),
       child: DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        minChildSize: 0.4,
-        maxChildSize: 0.9,
+        initialChildSize: AppConstants.commentsSheetInitialSize,
+        minChildSize: AppConstants.commentsSheetMinSize,
+        maxChildSize: AppConstants.commentsSheetMaxSize,
         builder: (context, scrollController) {
           return AnimatedPadding(
-            duration: const Duration(milliseconds: 100),
+            duration: AppConstants.fastTransition,
             padding: EdgeInsets.only(bottom: bottomInset),
             child: GestureDetector(
               onTap: () => _inputFocus.unfocus(),

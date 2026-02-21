@@ -5,11 +5,10 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../core/theme/theme.dart';
-import 'media_preview_screen.dart';
-
-/// Capture mode: photo or video.
-enum CaptureMode { photo, video }
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/submit/presentation/camera_controls.dart';
+import 'package:crimereport/features/submit/presentation/media_preview_screen.dart';
 
 /// Full-screen camera for capturing crime report evidence.
 class CameraScreen extends StatefulWidget {
@@ -36,7 +35,7 @@ class _CameraScreenState extends State<CameraScreen>
   // Recording timer
   Timer? _recordingTimer;
   int _recordingSeconds = 0;
-  static const int _maxRecordingSeconds = 300;
+  static const int _maxRecordingSeconds = AppConstants.maxRecordingDurationSeconds;
 
   // Lifecycle recording recovery
   String? _pendingPreviewPath;
@@ -228,7 +227,9 @@ class _CameraScreenState extends State<CameraScreen>
     try {
       await _controller?.setFlashMode(_flashMode);
       setState(() {});
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Failed to set flash mode: $e');
+    }
   }
 
   void _onScaleStart(ScaleStartDetails details) {
@@ -346,10 +347,10 @@ class _CameraScreenState extends State<CameraScreen>
         ),
       ),
     ).then((result) {
+      if (!mounted) return;
       if (result is Map<String, dynamic>) {
         Navigator.of(context).pop(result);
       } else {
-        // User chose retake — delete the unused temp file
         File(filePath).delete().catchError((_) => File(filePath));
       }
     });
@@ -514,23 +515,16 @@ class _CameraScreenState extends State<CameraScreen>
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        // Close
-        _CircleButton(
+        CameraCircleButton(
           icon: Icons.close_rounded,
-          onTap: busy
-              ? null
-              : () => Navigator.of(context).pop(),
+          onTap: busy ? null : () => Navigator.of(context).pop(),
         ),
-
-        // Flash (hidden for front camera)
-        _CircleButton(
+        CameraCircleButton(
           icon: _flashIcon,
           label: _flashLabel,
           onTap: (busy || _isFrontCamera) ? null : _toggleFlash,
         ),
-
-        // Flip camera
-        _CircleButton(
+        CameraCircleButton(
           icon: Icons.flip_camera_ios_rounded,
           onTap: (busy || _cameras.length < 2) ? null : _flipCamera,
         ),
@@ -625,13 +619,13 @@ class _CameraScreenState extends State<CameraScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _ModeTab(
+                CameraModeTab(
                   label: 'Photo',
                   isActive: _mode == CaptureMode.photo,
                   onTap: () => setState(() => _mode = CaptureMode.photo),
                 ),
                 const SizedBox(width: AppSpacing.xl),
-                _ModeTab(
+                CameraModeTab(
                   label: 'Video',
                   isActive: _mode == CaptureMode.video,
                   onTap: () => setState(() => _mode = CaptureMode.video),
@@ -640,8 +634,7 @@ class _CameraScreenState extends State<CameraScreen>
             ),
           ),
 
-        // Capture button
-        _CaptureButton(
+        CameraCaptureButton(
           mode: _mode,
           isRecording: _isRecording,
           onTap: _mode == CaptureMode.photo ? _takePhoto : _toggleRecording,
@@ -651,131 +644,3 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
-// --- Sub-widgets ---
-
-class _CircleButton extends StatelessWidget {
-  final IconData icon;
-  final String? label;
-  final VoidCallback? onTap;
-
-  const _CircleButton({required this.icon, this.label, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final isDisabled = onTap == null;
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.black.withAlpha(100),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              color: isDisabled ? Colors.white38 : Colors.white,
-              size: 24,
-            ),
-          ),
-          if (label != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              label!,
-              style: AppTypography.caption.copyWith(
-                color: Colors.white70,
-                fontSize: 10,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _ModeTab extends StatelessWidget {
-  final String label;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  const _ModeTab({
-    required this.label,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: AppTypography.titleSmall.copyWith(
-              color: isActive ? Colors.white : Colors.white54,
-              fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
-            ),
-          ),
-          const SizedBox(height: 4),
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            width: isActive ? 6 : 0,
-            height: 6,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CaptureButton extends StatelessWidget {
-  final CaptureMode mode;
-  final bool isRecording;
-  final VoidCallback onTap;
-
-  const _CaptureButton({
-    required this.mode,
-    required this.isRecording,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 80,
-        height: 80,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: Colors.white,
-            width: 4,
-          ),
-        ),
-        padding: const EdgeInsets.all(4),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          width: isRecording ? 32 : 64,
-          height: isRecording ? 32 : 64,
-          decoration: BoxDecoration(
-            color: mode == CaptureMode.video
-                ? AppColors.accent
-                : Colors.white,
-            borderRadius: BorderRadius.circular(isRecording ? 8 : 32),
-          ),
-        ),
-      ),
-    );
-  }
-}

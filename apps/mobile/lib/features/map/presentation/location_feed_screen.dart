@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/theme/theme.dart';
-import '../../feed/data/models/report.dart';
-import '../../feed/presentation/widgets/feed_video_item.dart';
-import '../../feed/providers/feed_providers.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
+import 'package:crimereport/features/feed/presentation/widgets/feed_video_item.dart';
+import 'package:crimereport/features/feed/providers/feed_providers.dart';
 
 /// Location-filtered feed screen with glass UI.
 ///
@@ -77,27 +77,56 @@ class _LocationFeedScreenState extends ConsumerState<LocationFeedScreen>
     );
     final topPadding = MediaQuery.of(context).padding.top;
 
+    // Clamp index when the list shrinks (e.g. after a filter change)
+    final safeIndex = reports.isEmpty
+        ? 0
+        : _currentIndex.clamp(0, reports.length - 1);
+    if (safeIndex != _currentIndex && reports.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _currentIndex = safeIndex);
+        if (_pageController.hasClients &&
+            _pageController.page?.round() != safeIndex) {
+          _pageController.jumpToPage(safeIndex);
+        }
+      });
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       extendBodyBehindAppBar: true,
       body: Stack(
         children: [
-          // Video feed
-          PageView.builder(
-            controller: _pageController,
-            scrollDirection: Axis.vertical,
-            onPageChanged: _onPageChanged,
-            itemCount: reports.length,
-            itemBuilder: (context, index) {
-              return FeedVideoItem(
-                key: ValueKey(reports[index].id),
-                report: reports[index],
-                isActive: index == _currentIndex && _isScreenActive,
-                preloadManager: ref.read(videoPreloadManagerProvider),
-                ignoreTabState: true, // Bypass tab check for pushed screen
-              );
-            },
-          ),
+          if (reports.isEmpty)
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.filter_alt_off_rounded, size: 48, color: AppColors.textTertiary),
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    'No reports match your filters',
+                    style: AppTypography.bodyMedium.copyWith(color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            )
+          else
+            PageView.builder(
+              controller: _pageController,
+              scrollDirection: Axis.vertical,
+              onPageChanged: _onPageChanged,
+              itemCount: reports.length,
+              itemBuilder: (context, index) {
+                return FeedVideoItem(
+                  key: ValueKey(reports[index].id),
+                  report: reports[index],
+                  isActive: index == safeIndex && _isScreenActive,
+                  preloadManager: ref.read(videoPreloadManagerProvider),
+                  ignoreTabState: true,
+                );
+              },
+            ),
 
           // Header overlay
           Positioned(
@@ -140,10 +169,10 @@ class _GlassCloseButton extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: Colors.black.withAlpha(64), // 25% opacity
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: Colors.white.withAlpha(38), // 15% opacity
+            color: AppColors.glassBackground,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: AppColors.glassBorderLight,
                 width: 0.5,
               ),
             ),
@@ -177,10 +206,10 @@ class _GlassLocationBadge extends StatelessWidget {
             vertical: AppSpacing.xs + 2,
           ),
           decoration: BoxDecoration(
-            color: Colors.black.withAlpha(64), // 25% opacity
+            color: AppColors.glassBackground,
             borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
             border: Border.all(
-              color: Colors.white.withAlpha(38), // 15% opacity
+              color: AppColors.glassBorderLight,
               width: 0.5,
             ),
           ),

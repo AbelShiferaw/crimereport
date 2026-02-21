@@ -1,5 +1,5 @@
-import '../../../../core/constants/enums.dart';
-import 'media.dart';
+import 'package:crimereport/core/constants/enums.dart';
+import 'package:crimereport/features/feed/data/models/media.dart';
 
 /// Represents a crime report with location, media, and engagement data.
 class Report {

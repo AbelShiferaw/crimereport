@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../core/utils/responsive.dart';
+import 'package:crimereport/core/utils/responsive.dart';
 
 /// A widget that builds different layouts based on screen size.
 /// Automatically switches between mobile, tablet, and desktop layouts.

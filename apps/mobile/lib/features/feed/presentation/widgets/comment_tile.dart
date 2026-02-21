@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme/theme.dart';
-import '../../data/models/comment.dart';
-import '../../providers/feed_providers.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/feed/data/models/comment.dart';
+import 'package:crimereport/features/feed/providers/feed_providers.dart';
 
 class CommentTile extends ConsumerWidget {
   final Comment comment;

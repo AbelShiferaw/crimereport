@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/constants/enums.dart';
-import '../../../core/theme/theme.dart';
-import '../../../core/utils/responsive.dart';
-import '../providers/settings_providers.dart';
-import 'legal_text_screen.dart';
+import 'package:crimereport/core/constants/enums.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/core/utils/responsive.dart';
+import 'package:crimereport/shared/widgets/surface_card.dart';
+import 'package:crimereport/features/settings/providers/settings_providers.dart';
+import 'package:crimereport/features/settings/presentation/legal_text_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -42,7 +43,7 @@ class SettingsScreen extends ConsumerWidget {
                 const SizedBox(height: AppSpacing.lg),
                 _buildAboutSection(context),
                 const SizedBox(height: AppSpacing.xl),
-                _buildAnonymousIdCard(),
+                _buildAnonymousIdCard(ref),
                 SizedBox(height: AppSpacing.floatingNavBarSpace),
               ],
             ),
@@ -72,7 +73,8 @@ class SettingsScreen extends ConsumerWidget {
             value: pushEnabled,
             onChanged: (v) =>
                 ref.read(pushNotificationsEnabledProvider.notifier).state = v,
-            activeColor: AppColors.primary,
+            activeTrackColor: AppColors.primary.withValues(alpha: 0.5),
+            activeThumbColor: AppColors.primary,
           ),
         ),
         if (pushEnabled) ...[
@@ -84,12 +86,8 @@ class SettingsScreen extends ConsumerWidget {
   }
 
   Widget _buildRadiusSlider(BuildContext context, WidgetRef ref, double radius) {
-    return Container(
+    return SurfaceCard(
       padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -219,12 +217,8 @@ class SettingsScreen extends ConsumerWidget {
   ) {
     final isActive = activeFilters.contains(type);
 
-    return Container(
+    return SurfaceCard(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-      ),
       child: ListTile(
         leading: Container(
           width: 40,
@@ -257,7 +251,8 @@ class SettingsScreen extends ConsumerWidget {
             }
             notifier.state = current;
           },
-          activeColor: AppColors.primary,
+          activeTrackColor: AppColors.primary.withValues(alpha: 0.5),
+          activeThumbColor: AppColors.primary,
         ),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
@@ -329,7 +324,9 @@ class SettingsScreen extends ConsumerWidget {
 
   // --------------- Anonymous ID ---------------
 
-  Widget _buildAnonymousIdCard() {
+  Widget _buildAnonymousIdCard(WidgetRef ref) {
+    final asyncId = ref.watch(anonymousIdProvider);
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
@@ -347,7 +344,18 @@ class SettingsScreen extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          Text('a1b2c3d4e5f6...', style: AppTypography.monospace),
+          asyncId.when(
+            data: (id) => Text(id, style: AppTypography.monospace),
+            loading: () => const SizedBox(
+              height: 16,
+              width: 16,
+              child: CircularProgressIndicator(strokeWidth: 1.5),
+            ),
+            error: (_, _) => Text(
+              'Unable to load ID',
+              style: AppTypography.caption.copyWith(color: AppColors.error),
+            ),
+          ),
           const SizedBox(height: AppSpacing.sm),
           Text(
             'This ID is not linked to your identity',
@@ -394,12 +402,8 @@ class _SettingsTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return SurfaceCard(
       margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-      ),
       child: ListTile(
         leading: Container(
           width: 40,

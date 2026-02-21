@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/theme/theme.dart';
-import '../providers/feed_providers.dart';
-import 'widgets/feed_video_item.dart';
+import 'package:crimereport/core/constants/enums.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/settings/providers/settings_providers.dart';
+import 'package:crimereport/features/feed/providers/feed_providers.dart';
+import 'package:crimereport/features/feed/presentation/widgets/feed_video_item.dart';
 
 /// TikTok-style full-screen vertical swipe feed.
 ///
@@ -69,12 +71,24 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
             return _buildEmptyState();
           }
 
+          // Clamp index when the list shrinks (e.g. after a filter change)
+          final safeIndex = currentIndex.clamp(0, reports.length - 1);
+          if (safeIndex != currentIndex) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              ref.read(feedCurrentIndexProvider.notifier).state = safeIndex;
+              if (_pageController.hasClients &&
+                  _pageController.page?.round() != safeIndex) {
+                _pageController.jumpToPage(safeIndex);
+              }
+            });
+          }
+
           if (!_hasInitialPreload) {
             _hasInitialPreload = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               ref
                   .read(videoPreloadManagerProvider)
-                  .preloadAround(reports, currentIndex);
+                  .preloadAround(reports, safeIndex);
             });
           }
 
@@ -90,7 +104,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               return FeedVideoItem(
                 key: ValueKey(report.id),
                 report: report,
-                isActive: index == currentIndex,
+                isActive: index == safeIndex,
                 preloadManager: preloadManager,
               );
             },
@@ -156,6 +170,9 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   }
 
   Widget _buildEmptyState() {
+    final activeFilters = ref.read(crimeTypeFiltersProvider);
+    final allFiltersOff = activeFilters.isEmpty;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -163,25 +180,46 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              Icons.video_library_outlined,
+              allFiltersOff ? Icons.filter_alt_off_rounded : Icons.video_library_outlined,
               size: 64,
               color: AppColors.textTertiary,
             ),
             const SizedBox(height: 16),
             Text(
-              'No reports yet',
+              allFiltersOff ? 'All filters are off' : 'No reports yet',
               style: AppTypography.headlineSmall.copyWith(
                 color: AppColors.textSecondary,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Be the first to report a crime in your area',
+              allFiltersOff
+                  ? 'Enable crime type filters in Settings to see reports'
+                  : 'Be the first to report a crime in your area',
               style: AppTypography.bodyMedium.copyWith(
                 color: AppColors.textTertiary,
               ),
               textAlign: TextAlign.center,
             ),
+            if (allFiltersOff) ...[
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () {
+                  ref.read(crimeTypeFiltersProvider.notifier).state =
+                      Set.from(ReportType.values);
+                },
+                icon: const Icon(Icons.filter_alt_rounded, size: 18),
+                label: const Text('Enable All Filters'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

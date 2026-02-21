@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_nav_bar/google_nav_bar.dart';
 
-import '../../core/constants/app_constants.dart';
-import '../../core/theme/theme.dart';
-import '../../core/utils/responsive.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/core/utils/responsive.dart';
 
 /// A floating bottom navigation bar using google_nav_bar.
 /// 

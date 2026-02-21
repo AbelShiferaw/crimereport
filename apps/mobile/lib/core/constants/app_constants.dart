@@ -46,6 +46,8 @@ class AppConstants {
   static const double feedInfoBarRightMargin = 80.0; // Clear action buttons
 
   // Animations
+  static const Duration standardTransition = Duration(milliseconds: 200);
+  static const Duration fastTransition = Duration(milliseconds: 100);
   static const Duration heartAnimationDuration = Duration(milliseconds: 800);
   static const Duration overlayFadeDuration = Duration(milliseconds: 150);
   static const Duration navBarAnimationDuration = Duration(milliseconds: 300);
@@ -96,4 +98,17 @@ class AppConstants {
   // Location Feed
   /// Radius in km for location feed nearby reports.
   static const double locationFeedRadiusKm = 1.0;
+
+  // Camera
+  static const int maxRecordingDurationSeconds = 300;
+
+  // Report Form
+  static const int maxDescriptionLength = 500;
+  static const double mediaPreviewWidth = 140.0;
+  static const double mediaPreviewHeight = 180.0;
+
+  // Comments Sheet
+  static const double commentsSheetInitialSize = 0.6;
+  static const double commentsSheetMinSize = 0.4;
+  static const double commentsSheetMaxSize = 0.9;
 }

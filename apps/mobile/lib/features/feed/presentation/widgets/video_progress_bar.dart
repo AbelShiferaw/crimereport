@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../../core/constants/app_constants.dart';
-import '../../../../core/theme/theme.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/theme.dart';
 
 /// TikTok-style seekable progress bar with large gesture zone.
 ///

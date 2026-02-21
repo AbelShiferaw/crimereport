@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'colors.dart';
+import 'package:crimereport/core/theme/colors.dart';
 
 /// Centralized typography styles.
 /// Use these text styles throughout the app for consistency.

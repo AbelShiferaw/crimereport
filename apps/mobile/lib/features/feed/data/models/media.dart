@@ -1,4 +1,4 @@
-import '../../../../core/constants/enums.dart';
+import 'package:crimereport/core/constants/enums.dart';
 
 /// Represents a media attachment (video or image) for a crime report.
 class Media {

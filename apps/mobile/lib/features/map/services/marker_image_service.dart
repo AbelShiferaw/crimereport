@@ -6,8 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:image/image.dart' as img;
 
-import '../../../core/constants/app_constants.dart';
-import '../../../core/theme/colors.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/colors.dart';
 
 /// Error types for marker image loading.
 enum MarkerImageError {
@@ -245,14 +245,12 @@ class MarkerImageService {
   /// Clear all in-memory caches.
   void clearMemoryCache() {
     _processedCache.clear();
-    debugPrint('MarkerImageService: Memory cache cleared');
   }
 
   /// Clear all caches (memory + disk).
   Future<void> clearAllCaches() async {
     _processedCache.clear();
     await _cacheManager.emptyCache();
-    debugPrint('MarkerImageService: All caches cleared');
   }
 
   /// Get cache statistics for debugging.

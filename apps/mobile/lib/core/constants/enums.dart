@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../theme/colors.dart';
+import 'package:crimereport/core/theme/colors.dart';
 
 /// Crime report type with display name and associated color.
 enum ReportType {

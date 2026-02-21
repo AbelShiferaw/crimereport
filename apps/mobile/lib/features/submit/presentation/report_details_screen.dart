@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 
-import '../../../core/constants/enums.dart';
-import '../../../core/theme/theme.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/constants/enums.dart';
+import 'package:crimereport/core/theme/theme.dart';
 
 class ReportDetailsScreen extends StatefulWidget {
   final String filePath;
@@ -24,7 +25,7 @@ class ReportDetailsScreen extends StatefulWidget {
 class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
   final _descriptionController = TextEditingController();
   final _descriptionFocus = FocusNode();
-  static const int _maxDescriptionLength = 500;
+  static const int _maxDescriptionLength = AppConstants.maxDescriptionLength;
 
   ReportType? _selectedType;
   Position? _location;
@@ -169,8 +170,8 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
         child: SizedBox(
-          width: 140,
-          height: 180,
+          width: AppConstants.mediaPreviewWidth,
+          height: AppConstants.mediaPreviewHeight,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -249,7 +250,7 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
             setState(() => _selectedType = type);
           },
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
+            duration: AppConstants.standardTransition,
             padding: const EdgeInsets.symmetric(
               horizontal: AppSpacing.md,
               vertical: AppSpacing.sm + AppSpacing.xxs,
@@ -434,7 +435,7 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
       child: GestureDetector(
         onTap: (_isFormValid && !_isSubmitting) ? _submit : null,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
+          duration: AppConstants.standardTransition,
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
           decoration: BoxDecoration(

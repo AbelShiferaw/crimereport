@@ -3,7 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../core/theme/theme.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/theme.dart';
 
 /// Shows a preview of the captured photo or video with retake/confirm actions.
 class MediaPreviewScreen extends StatefulWidget {
@@ -24,6 +25,7 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen>
     with WidgetsBindingObserver {
   VideoPlayerController? _videoController;
   bool _isVideoReady = false;
+  bool _hasVideoError = false;
 
   @override
   void initState() {
@@ -44,6 +46,7 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen>
       if (mounted) setState(() => _isVideoReady = true);
     } catch (e) {
       debugPrint('Error initializing preview video: $e');
+      if (mounted) setState(() => _hasVideoError = true);
     }
   }
 
@@ -122,6 +125,46 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen>
   }
 
   Widget _buildVideoPreview() {
+    if (_hasVideoError) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.videocam_off_rounded, color: Colors.white54, size: 48),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              'Unable to load video preview',
+              style: AppTypography.bodyMedium.copyWith(color: Colors.white70),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _hasVideoError = false;
+                  _isVideoReady = false;
+                });
+                _initVideo();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.lg,
+                  vertical: AppSpacing.sm,
+                ),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white38),
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                ),
+                child: Text(
+                  'Tap to retry',
+                  style: AppTypography.bodySmall.copyWith(color: Colors.white70),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (!_isVideoReady || _videoController == null) {
       return const Center(
         child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
@@ -150,7 +193,7 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen>
       behavior: HitTestBehavior.opaque,
       child: AnimatedOpacity(
         opacity: _videoController!.value.isPlaying ? 0.0 : 1.0,
-        duration: const Duration(milliseconds: 200),
+        duration: AppConstants.standardTransition,
         child: Center(
           child: Container(
             padding: const EdgeInsets.all(AppSpacing.md),

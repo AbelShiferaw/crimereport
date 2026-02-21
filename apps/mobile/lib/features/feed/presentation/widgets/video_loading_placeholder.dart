@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shimmer/shimmer.dart';
 
-import '../../../../core/theme/theme.dart';
+import 'package:crimereport/core/theme/theme.dart';
 
 /// Shimmer loading placeholder while video initializes.
 class VideoLoadingPlaceholder extends StatelessWidget {

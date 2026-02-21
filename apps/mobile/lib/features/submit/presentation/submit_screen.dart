@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import '../../../core/theme/theme.dart';
-import 'camera_screen.dart';
-import 'report_details_screen.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/submit/presentation/camera_screen.dart';
+import 'package:crimereport/features/submit/presentation/report_details_screen.dart';
 
 class SubmitScreen extends StatefulWidget {
   const SubmitScreen({super.key});

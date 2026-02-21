@@ -1,7 +1,7 @@
-import '../../core/constants/enums.dart';
-import '../../features/feed/data/models/comment.dart';
-import '../../features/feed/data/models/media.dart';
-import '../../features/feed/data/models/report.dart';
+import 'package:crimereport/core/constants/enums.dart';
+import 'package:crimereport/features/feed/data/models/comment.dart';
+import 'package:crimereport/features/feed/data/models/media.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
 
 /// Raw mock data for development and testing.
 /// All locations are centered around San Francisco (37.7749, -122.4194).

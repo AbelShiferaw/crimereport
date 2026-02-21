@@ -3,8 +3,8 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../../core/constants/app_constants.dart';
-import '../../data/models/report.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
 
 /// Manages video controller preloading and cleanup for smooth scrolling.
 ///
@@ -65,7 +65,6 @@ class VideoPreloadManager {
       final lruUrl = _controllers.keys.first; // First = least recently used
       final controller = _controllers.remove(lruUrl);
       controller?.dispose();
-      debugPrint('LRU evicted controller: ${lruUrl.split('/').last}');
     }
   }
 
@@ -79,7 +78,6 @@ class VideoPreloadManager {
     controller.setLooping(true);
     controller.setVolume(1.0);
 
-    debugPrint('Initialized controller: ${url.split('/').last}');
     return controller;
   }
 
@@ -140,6 +138,5 @@ class VideoPreloadManager {
     }
     _controllers.clear();
     _pendingLoads.clear();
-    debugPrint('VideoPreloadManager disposed');
   }
 }

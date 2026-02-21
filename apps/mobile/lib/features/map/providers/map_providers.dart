@@ -1,7 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
-import '../../../core/constants/app_constants.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/constants/enums.dart';
+import 'package:crimereport/shared/data/mock_data_service.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
+import 'package:crimereport/features/settings/providers/settings_providers.dart';
 
 /// User's current location state.
 final userLocationProvider = StateProvider<Position?>((ref) => null);
@@ -68,3 +72,12 @@ class LocationService {
 /// Singleton location service provider.
 final locationServiceProvider =
     Provider<LocationService>((ref) => LocationService());
+
+/// Map reports filtered by active crime type filters.
+/// Rebuilds when filters change so the map can update its GeoJSON source.
+final mapReportsProvider = Provider<List<Report>>((ref) {
+  final activeFilters = ref.watch(crimeTypeFiltersProvider);
+  final allReports = MockDataService.instance.getReports();
+  if (activeFilters.length == ReportType.values.length) return allReports;
+  return allReports.where((r) => activeFilters.contains(r.type)).toList();
+});

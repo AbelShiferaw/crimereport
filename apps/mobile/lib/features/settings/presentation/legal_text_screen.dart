@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../../core/theme/theme.dart';
-import '../../../core/utils/responsive.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/core/utils/responsive.dart';
 
 class LegalTextScreen extends StatelessWidget {
   final String title;

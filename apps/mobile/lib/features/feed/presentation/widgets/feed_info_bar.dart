@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../../../core/theme/theme.dart';
-import '../../../../core/utils/formatters.dart';
-import '../../data/models/report.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/core/utils/formatters.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
 
 /// Bottom info bar showing crime type, description, distance and time.
 ///

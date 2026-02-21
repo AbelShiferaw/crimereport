@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../features/feed/presentation/feed_screen.dart';
-import '../../features/feed/providers/feed_providers.dart';
-import '../../features/map/presentation/map_screen.dart';
-import '../../features/submit/presentation/submit_screen.dart';
-import '../../features/settings/presentation/settings_screen.dart';
-import 'floating_nav_bar.dart';
+import 'package:crimereport/features/feed/presentation/feed_screen.dart';
+import 'package:crimereport/features/feed/providers/feed_providers.dart';
+import 'package:crimereport/features/map/presentation/map_screen.dart';
+import 'package:crimereport/features/submit/presentation/submit_screen.dart';
+import 'package:crimereport/features/settings/presentation/settings_screen.dart';
+import 'package:crimereport/shared/widgets/floating_nav_bar.dart';
 
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});

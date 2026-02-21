@@ -59,6 +59,10 @@ class AppColors {
   static const Color overlayDark = Color(0x99000000);
   /// 80% black - heavy overlay for tooltips, timestamps
   static const Color overlayHeavy = Color(0xCC000000);
+  /// 25% black - glass background for floating overlays
+  static const Color glassBackground = Color(0x40000000);
+  /// 15% white - glass border for floating overlays
+  static const Color glassBorderLight = Color(0x26FFFFFF);
   /// 8% white - subtle glass border
   static const Color glassBorder = Color(0x14FFFFFF);
   /// 30% white - progress bar track

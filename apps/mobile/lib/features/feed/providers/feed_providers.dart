@@ -1,10 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../core/constants/app_constants.dart';
-import '../../../shared/data/mock_data_service.dart';
-import '../data/models/comment.dart';
-import '../data/models/report.dart';
-import '../presentation/managers/video_preload_manager.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/constants/enums.dart';
+import 'package:crimereport/shared/data/mock_data_service.dart';
+import 'package:crimereport/features/settings/providers/settings_providers.dart';
+import 'package:crimereport/features/feed/data/models/comment.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
+import 'package:crimereport/features/feed/presentation/managers/video_preload_manager.dart';
 
 /// Current app tab index (0=Feed, 1=Map, 2=Submit, 3=Settings).
 /// Used to pause videos when navigating away from feed.
@@ -15,11 +17,14 @@ final isFeedTabActiveProvider = Provider<bool>((ref) {
   return ref.watch(appTabIndexProvider) == 0;
 });
 
-/// Provider for feed reports - auto disposes when not used.
+/// Provider for feed reports, filtered by active crime type filters.
 final feedReportsProvider = FutureProvider.autoDispose<List<Report>>((
   ref,
 ) async {
-  return MockDataService.instance.getReportsAsync();
+  final activeFilters = ref.watch(crimeTypeFiltersProvider);
+  final reports = await MockDataService.instance.getReportsAsync();
+  if (activeFilters.length == ReportType.values.length) return reports;
+  return reports.where((r) => activeFilters.contains(r.type)).toList();
 });
 
 /// Current feed index state.
@@ -33,7 +38,6 @@ final videoPreloadManagerProvider = Provider<VideoPreloadManager>((ref) {
 });
 
 /// Tracks which reports the user has upvoted (local state).
-/// TODO: Persist to local storage in Milestone 13, sync with backend later.
 final upvotedReportsProvider = StateProvider<Set<String>>((ref) => {});
 
 /// Helper to toggle upvote state for a report.
@@ -67,20 +71,26 @@ void toggleCommentUpvote(WidgetRef ref, String commentId) {
   }
 }
 
-/// Provider for reports near a specific location.
+/// Provider for reports near a specific location, filtered by crime type.
 /// Used by LocationFeedScreen when tapping a map marker.
 final locationFeedReportsProvider = Provider.family<List<Report>, Report>((
   ref,
   initialReport,
 ) {
+  final activeFilters = ref.watch(crimeTypeFiltersProvider);
   final nearby = MockDataService.instance.getNearbyReports(
     initialReport.latitude,
     initialReport.longitude,
     AppConstants.locationFeedRadiusKm,
   );
 
-  // Ensure the tapped report is first
-  final reordered = nearby.where((r) => r.id != initialReport.id).toList();
-  reordered.insert(0, initialReport);
+  final filtered = nearby.where((r) => activeFilters.contains(r.type)).toList();
+
+  // Ensure the tapped report is first (even if its type is filtered out,
+  // keep it since user explicitly tapped this marker)
+  final reordered = filtered.where((r) => r.id != initialReport.id).toList();
+  if (activeFilters.contains(initialReport.type)) {
+    reordered.insert(0, initialReport);
+  }
   return reordered;
 });

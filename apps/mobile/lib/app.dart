@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'core/theme/theme.dart';
-import 'shared/widgets/app_shell.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/shared/widgets/app_shell.dart';
 
 class CrimeReportApp extends StatelessWidget {
   const CrimeReportApp({super.key});

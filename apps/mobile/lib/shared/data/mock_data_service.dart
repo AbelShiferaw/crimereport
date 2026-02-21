@@ -1,7 +1,7 @@
-import '../../core/utils/geo_utils.dart';
-import '../../features/feed/data/models/comment.dart';
-import '../../features/feed/data/models/report.dart';
-import 'sample_data.dart';
+import 'package:crimereport/core/utils/geo_utils.dart';
+import 'package:crimereport/features/feed/data/models/comment.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
+import 'package:crimereport/shared/data/sample_data.dart';
 
 /// Singleton service providing mock data with query methods.
 ///

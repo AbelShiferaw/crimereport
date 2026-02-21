@@ -3,19 +3,19 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../../core/constants/app_constants.dart';
-import '../../../../core/theme/theme.dart';
-import '../../data/models/report.dart';
-import '../../providers/feed_providers.dart';
-import '../managers/video_preload_manager.dart';
-import 'comments_sheet.dart';
-import 'double_tap_like_overlay.dart';
-import 'feed_action_buttons.dart';
-import 'feed_info_bar.dart';
-import 'video_error_placeholder.dart';
-import 'video_gesture_controls.dart';
-import 'video_loading_placeholder.dart';
-import 'video_progress_bar.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
+import 'package:crimereport/features/feed/providers/feed_providers.dart';
+import 'package:crimereport/features/feed/presentation/managers/video_preload_manager.dart';
+import 'package:crimereport/features/feed/presentation/widgets/comments_sheet.dart';
+import 'package:crimereport/features/feed/presentation/widgets/double_tap_like_overlay.dart';
+import 'package:crimereport/features/feed/presentation/widgets/feed_action_buttons.dart';
+import 'package:crimereport/features/feed/presentation/widgets/feed_info_bar.dart';
+import 'package:crimereport/features/feed/presentation/widgets/video_error_placeholder.dart';
+import 'package:crimereport/features/feed/presentation/widgets/video_gesture_controls.dart';
+import 'package:crimereport/features/feed/presentation/widgets/video_loading_placeholder.dart';
+import 'package:crimereport/features/feed/presentation/widgets/video_progress_bar.dart';
 
 /// Individual video item in the feed with TikTok-style overlays.
 ///
@@ -164,19 +164,25 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
       return;
     }
 
-    // Play when becoming active
+    // Play when becoming active (deferred to avoid setState during build)
     if (widget.isActive && !oldWidget.isActive) {
       final shouldPlay =
           widget.ignoreTabState || ref.read(isFeedTabActiveProvider);
       if (shouldPlay) {
-        _controller!.seekTo(Duration.zero);
-        _controller!.play();
-        setState(() => _isPaused = false);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_isControllerValid()) return;
+          _controller!.seekTo(Duration.zero);
+          _controller!.play();
+          setState(() => _isPaused = false);
+        });
       }
     }
     // Pause when becoming inactive
     else if (!widget.isActive && oldWidget.isActive) {
-      _controller!.pause();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !_isControllerValid()) return;
+        _controller!.pause();
+      });
     }
   }
 
@@ -284,7 +290,6 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   }
 
   void _handleFlag() {
-    debugPrint('Flag tapped for report: ${widget.report.id}');
   }
 
   void _retryLoad() {

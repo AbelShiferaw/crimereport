@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../../core/constants/app_constants.dart';
-import '../../../../core/theme/theme.dart';
-import '../../../../core/utils/formatters.dart';
-import '../../data/models/report.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/core/utils/formatters.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
 
 /// Side action buttons for upvote, comment, and flag.
 ///

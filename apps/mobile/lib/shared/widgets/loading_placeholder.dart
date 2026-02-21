@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/theme.dart';
+import 'package:crimereport/core/theme/theme.dart';
 
 /// Reusable loading placeholder with spinner and optional message.
 ///

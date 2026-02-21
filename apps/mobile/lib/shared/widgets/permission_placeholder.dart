@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../core/theme/theme.dart';
+import 'package:crimereport/core/theme/theme.dart';
 
 /// Reusable permission denied placeholder.
 ///

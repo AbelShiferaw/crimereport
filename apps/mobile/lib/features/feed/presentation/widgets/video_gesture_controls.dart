@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../../core/constants/app_constants.dart';
-import '../../../../core/theme/theme.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/core/theme/theme.dart';
 
 /// Handles long-press gesture for 2x speed playback.
 ///
@@ -69,7 +69,9 @@ class _VideoGestureControlsState extends State<VideoGestureControls> {
     if (_isFastForwarding) {
       try {
         widget.controller?.setPlaybackSpeed(1.0);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('Error resetting playback speed: $e');
+      }
     }
     super.dispose();
   }
