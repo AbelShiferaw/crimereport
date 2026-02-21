@@ -123,6 +123,12 @@ class VideoPreloadManager {
   /// Check if a controller is ready for the given URL.
   bool isReady(String url) => _controllers.containsKey(url);
 
+  /// Check if [controller] is the current cached instance for [url].
+  /// Returns false if the URL was evicted or replaced with a new instance.
+  bool isCurrent(String url, VideoPlayerController controller) {
+    return _controllers[url] == controller;
+  }
+
   /// Get current cache size.
   int get cacheSize => _controllers.length;
 

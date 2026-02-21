@@ -120,27 +120,23 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   void _videoListener() {
     if (!mounted || _controller == null) return;
 
-    try {
-      final isBuffering = _controller!.value.isBuffering;
-      if (isBuffering != _isBuffering) {
-        setState(() => _isBuffering = isBuffering);
-      }
+    if (!_isControllerValid()) return;
 
-      // Sync _isPaused with actual controller state
-      // This handles cases where other widgets (like VideoGestureControls) play/pause
-      final isCurrentlyPaused = !_controller!.value.isPlaying;
-      if (isCurrentlyPaused != _isPaused) {
-        setState(() => _isPaused = isCurrentlyPaused);
-      }
+    final isBuffering = _controller!.value.isBuffering;
+    if (isBuffering != _isBuffering) {
+      setState(() => _isBuffering = isBuffering);
+    }
 
-      if (_controller!.value.hasError) {
-        setState(() {
-          _hasError = true;
-          _errorMessage = 'Playback error';
-        });
-      }
-    } catch (_) {
-      // Controller was disposed by LRU eviction - will be re-fetched when needed
+    final isCurrentlyPaused = !_controller!.value.isPlaying;
+    if (isCurrentlyPaused != _isPaused) {
+      setState(() => _isPaused = isCurrentlyPaused);
+    }
+
+    if (_controller!.value.hasError) {
+      setState(() {
+        _hasError = true;
+        _errorMessage = 'Playback error';
+      });
     }
   }
 
@@ -150,26 +146,33 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
 
     if (_controller == null || _hasError || !_isInitialized) return;
 
-    try {
-      // Play when becoming active
-      if (widget.isActive && !oldWidget.isActive) {
-        // Check if we should play (ignore tab state for pushed screens like LocationFeed)
-        final shouldPlay =
-            widget.ignoreTabState || ref.read(isFeedTabActiveProvider);
-        if (shouldPlay) {
-          _controller!.seekTo(Duration.zero);
-          _controller!.play();
-          setState(() => _isPaused = false);
-        }
-      }
-      // Pause when becoming inactive
-      else if (!widget.isActive && oldWidget.isActive) {
-        _controller!.pause();
-      }
-    } catch (_) {
-      // Controller may have been disposed by LRU eviction
+    if (!_isControllerValid()) {
       _handleControllerDisposed();
+      return;
     }
+
+    // Play when becoming active
+    if (widget.isActive && !oldWidget.isActive) {
+      final shouldPlay =
+          widget.ignoreTabState || ref.read(isFeedTabActiveProvider);
+      if (shouldPlay) {
+        _controller!.seekTo(Duration.zero);
+        _controller!.play();
+        setState(() => _isPaused = false);
+      }
+    }
+    // Pause when becoming inactive
+    else if (!widget.isActive && oldWidget.isActive) {
+      _controller!.pause();
+    }
+  }
+
+  /// Whether [_controller] is still the live instance in the preload cache.
+  /// Returns false if it was evicted or replaced by a newer instance.
+  bool _isControllerValid() {
+    if (_controller == null) return false;
+    final url = widget.report.primaryMedia?.url;
+    return url != null && widget.preloadManager.isCurrent(url, _controller!);
   }
 
   /// Handle case where controller was disposed externally (LRU eviction).
@@ -187,32 +190,28 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   /// Handles tab visibility changes - pauses video when feed tab is hidden.
   /// Skipped when [ignoreTabState] is true (for pushed screens).
   void _handleTabVisibilityChange(bool isFeedTabActive) {
-    // Skip for pushed screens that don't use tab navigation
     if (widget.ignoreTabState) return;
 
     if (_controller == null || !_isInitialized || _hasError) return;
 
-    try {
-      if (!isFeedTabActive) {
-        // Save playing state BEFORE pausing
-        _wasPlayingBeforeTabSwitch = _controller!.value.isPlaying;
-        _controller!.pause();
-      } else if (widget.isActive && _wasPlayingBeforeTabSwitch) {
-        // Resume if it was playing before tab switch
-        _controller!.play();
-      }
-    } catch (_) {
-      // Controller may have been disposed by LRU eviction
+    if (!_isControllerValid()) {
+      _handleControllerDisposed();
+      return;
+    }
+
+    if (!isFeedTabActive) {
+      _wasPlayingBeforeTabSwitch = _controller!.value.isPlaying;
+      _controller!.pause();
+    } else if (widget.isActive && _wasPlayingBeforeTabSwitch) {
+      _controller!.play();
     }
   }
 
   @override
   void dispose() {
     _controller?.removeListener(_videoListener);
-    try {
+    if (_isControllerValid()) {
       _controller?.pause();
-    } catch (_) {
-      // Controller may already be disposed by LRU eviction
     }
     // Don't dispose controller - it's managed by VideoPreloadManager
     super.dispose();
@@ -221,17 +220,17 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
   void _togglePlayPause() {
     if (_controller == null || !_isInitialized || _hasError) return;
 
-    try {
-      if (_controller!.value.isPlaying) {
-        _controller!.pause();
-        setState(() => _isPaused = true);
-      } else {
-        _controller!.play();
-        setState(() => _isPaused = false);
-      }
-    } catch (_) {
-      // Controller may have been disposed by LRU eviction
+    if (!_isControllerValid()) {
       _handleControllerDisposed();
+      return;
+    }
+
+    if (_controller!.value.isPlaying) {
+      _controller!.pause();
+      setState(() => _isPaused = true);
+    } else {
+      _controller!.play();
+      setState(() => _isPaused = false);
     }
   }
 
@@ -278,6 +277,15 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
       _handleTabVisibilityChange(current);
     });
 
+    final controllerReady = _isInitialized && _controller != null && _isControllerValid();
+
+    // Controller was evicted — trigger async recovery
+    if (_isInitialized && _controller != null && !controllerReady) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _handleControllerDisposed();
+      });
+    }
+
     return Container(
       color: AppColors.background,
       child: Stack(
@@ -286,13 +294,13 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
           // Layer 1: Video or placeholder
           if (_hasError)
             VideoErrorPlaceholder(message: _errorMessage, onRetry: _retryLoad)
-          else if (_isInitialized && _controller != null)
+          else if (controllerReady)
             _buildVideoPlayer()
           else
             const VideoLoadingPlaceholder(),
 
           // Layer 2: Gesture handlers (long-press → double-tap → tap)
-          if (_isInitialized && !_hasError)
+          if (controllerReady && !_hasError)
             VideoGestureControls(
               controller: _controller,
               child: DoubleTapLikeOverlay(
@@ -306,7 +314,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
             ),
 
           // Layer 3: Buffering indicator
-          if (_isBuffering && !_hasError)
+          if (_isBuffering && controllerReady)
             const Center(
               child: CircularProgressIndicator(
                 color: Colors.white,
@@ -316,7 +324,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
 
           // Layer 4: Pause icon (shown when paused)
           // IgnorePointer lets taps pass through to gesture layer behind
-          if (!_hasError && _isInitialized && _isPaused)
+          if (controllerReady && _isPaused)
             IgnorePointer(
               child: Center(
                 child: Container(
@@ -337,7 +345,7 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
           // Layer 5: Progress bar with large gesture zone (behind UI elements)
           // The visual bar is at the bottom, gesture zone extends upward 100px
           // Positioned BEFORE buttons/info so they receive taps
-          if (_isInitialized && !_hasError)
+          if (controllerReady)
             Positioned(
               left: 0,
               right: 0,
