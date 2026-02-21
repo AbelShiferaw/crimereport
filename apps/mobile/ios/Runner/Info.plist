@@ -32,6 +32,10 @@
 	<string>ReportCrime needs your location to show nearby crime reports on the map.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>ReportCrime uses your location to show nearby crime reports and send alerts.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>ReportCrime needs camera access to capture photos and videos of incidents.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ReportCrime needs microphone access to record audio with video evidence.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

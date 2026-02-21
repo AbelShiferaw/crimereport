@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
@@ -119,21 +120,35 @@ class _FeedVideoItemState extends ConsumerState<FeedVideoItem> {
 
     if (!_isControllerValid()) return;
 
-    final isBuffering = _controller!.value.isBuffering;
-    if (isBuffering != _isBuffering) {
-      setState(() => _isBuffering = isBuffering);
-    }
+    void applyUpdate() {
+      if (!mounted) return;
 
-    final isCurrentlyPaused = !_controller!.value.isPlaying;
-    if (isCurrentlyPaused != _isPaused) {
-      setState(() => _isPaused = isCurrentlyPaused);
-    }
+      final isBuffering = _controller?.value.isBuffering ?? false;
+      final isCurrentlyPaused = !(_controller?.value.isPlaying ?? false);
+      final hasError = _controller?.value.hasError ?? false;
 
-    if (_controller!.value.hasError) {
+      final needsRebuild = isBuffering != _isBuffering ||
+          isCurrentlyPaused != _isPaused ||
+          (hasError && !_hasError);
+
+      if (!needsRebuild) return;
+
       setState(() {
-        _hasError = true;
-        _errorMessage = 'Playback error';
+        _isBuffering = isBuffering;
+        _isPaused = isCurrentlyPaused;
+        if (hasError) {
+          _hasError = true;
+          _errorMessage = 'Playback error';
+        }
       });
+    }
+
+    // Defer setState if triggered during build (e.g. from didUpdateWidget → pause)
+    if (WidgetsBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => applyUpdate());
+    } else {
+      applyUpdate();
     }
   }
 
