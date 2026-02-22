@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/theme/theme.dart';
 import 'package:crimereport/features/submit/presentation/camera_screen.dart';
+import 'package:crimereport/features/submit/presentation/media_preview_screen.dart';
 import 'package:crimereport/features/submit/presentation/report_details_screen.dart';
 
 class SubmitScreen extends StatefulWidget {
@@ -13,6 +17,9 @@ class SubmitScreen extends StatefulWidget {
 }
 
 class _SubmitScreenState extends State<SubmitScreen> {
+  final ImagePicker _picker = ImagePicker();
+  bool _isPickerOpen = false;
+
   Future<void> _openCamera() async {
     final cameraStatus = await Permission.camera.request();
     final micStatus = await Permission.microphone.request();
@@ -34,40 +41,152 @@ class _SubmitScreenState extends State<SubmitScreen> {
     );
 
     if (result != null && mounted) {
-      final filePath = result['filePath'] as String;
-      final isVideo = result['isVideo'] as bool;
+      _navigateToDetails(
+        filePath: result['filePath'] as String,
+        isVideo: result['isVideo'] as bool,
+      );
+    }
+  }
 
-      final submitted = await Navigator.of(context).push<bool>(
+  Future<void> _openGallery() async {
+    if (_isPickerOpen) return;
+    HapticFeedback.lightImpact();
+
+    final mediaType = await _showMediaTypeSheet();
+    if (mediaType == null || !mounted) return;
+
+    _isPickerOpen = true;
+
+    try {
+      final XFile? file;
+      if (mediaType == _MediaType.video) {
+        file = await _picker.pickVideo(
+          source: ImageSource.gallery,
+          maxDuration: const Duration(
+            seconds: AppConstants.maxRecordingDurationSeconds,
+          ),
+        );
+      } else {
+        file = await _picker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 90,
+        );
+      }
+
+      _isPickerOpen = false;
+      if (file == null || !mounted) return;
+
+      final previewResult = await Navigator.of(context).push<Map<String, dynamic>>(
         MaterialPageRoute(
-          builder: (_) => ReportDetailsScreen(
-            filePath: filePath,
-            isVideo: isVideo,
+          builder: (_) => MediaPreviewScreen(
+            filePath: file!.path,
+            isVideo: mediaType == _MediaType.video,
+            fromGallery: true,
           ),
         ),
       );
 
-      if (submitted == true && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
-                const SizedBox(width: AppSpacing.sm),
-                Text(
-                  'Report submitted successfully',
-                  style: AppTypography.bodyMedium.copyWith(color: Colors.white),
-                ),
-              ],
-            ),
-            backgroundColor: AppColors.success,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-            ),
-            duration: const Duration(seconds: 2),
-          ),
+      if (previewResult != null && mounted) {
+        _navigateToDetails(
+          filePath: previewResult['filePath'] as String,
+          isVideo: previewResult['isVideo'] as bool,
         );
       }
+    } catch (e) {
+      _isPickerOpen = false;
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Could not open gallery'),
+          backgroundColor: AppColors.surface,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<_MediaType?> _showMediaTypeSheet() {
+    return showModalBottomSheet<_MediaType>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppSpacing.radiusXl),
+        ),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.divider,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              Text(
+                'Select media type',
+                style: AppTypography.titleSmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              ListTile(
+                leading: const Icon(Icons.photo_rounded, color: AppColors.primary),
+                title: Text('Photo', style: AppTypography.titleSmall),
+                onTap: () => Navigator.of(ctx).pop(_MediaType.photo),
+              ),
+              ListTile(
+                leading: const Icon(Icons.videocam_rounded, color: AppColors.primary),
+                title: Text('Video', style: AppTypography.titleSmall),
+                onTap: () => Navigator.of(ctx).pop(_MediaType.video),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _navigateToDetails({
+    required String filePath,
+    required bool isVideo,
+  }) async {
+    final submitted = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ReportDetailsScreen(
+          filePath: filePath,
+          isVideo: isVideo,
+        ),
+      ),
+    );
+
+    if (submitted == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                'Report submitted successfully',
+                style: AppTypography.bodyMedium.copyWith(color: Colors.white),
+              ),
+            ],
+          ),
+          backgroundColor: AppColors.success,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
     }
   }
 
@@ -158,7 +277,7 @@ class _SubmitScreenState extends State<SubmitScreen> {
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
-          'Capture photo or video evidence anonymously',
+          'Capture or upload evidence anonymously',
           style: AppTypography.bodyMedium.copyWith(
             color: AppColors.textTertiary,
           ),
@@ -189,8 +308,35 @@ class _SubmitScreenState extends State<SubmitScreen> {
             ),
           ),
         ),
+        const SizedBox(height: AppSpacing.md),
+        GestureDetector(
+          onTap: _openGallery,
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.xl,
+              vertical: AppSpacing.md,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(AppSpacing.radiusXxl),
+              border: Border.all(color: AppColors.divider, width: 0.5),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.photo_library_rounded, color: AppColors.textPrimary, size: 20),
+                const SizedBox(width: AppSpacing.sm),
+                Text(
+                  'Upload from Gallery',
+                  style: AppTypography.titleSmall,
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
-
 }
+
+enum _MediaType { photo, video }

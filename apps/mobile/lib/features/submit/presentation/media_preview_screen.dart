@@ -6,15 +6,17 @@ import 'package:video_player/video_player.dart';
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/theme/theme.dart';
 
-/// Shows a preview of the captured photo or video with retake/confirm actions.
+/// Shows a preview of the captured/selected photo or video with retake/confirm actions.
 class MediaPreviewScreen extends StatefulWidget {
   final String filePath;
   final bool isVideo;
+  final bool fromGallery;
 
   const MediaPreviewScreen({
     super.key,
     required this.filePath,
     required this.isVideo,
+    this.fromGallery = false,
   });
 
   @override
@@ -215,11 +217,10 @@ class _MediaPreviewScreenState extends State<MediaPreviewScreen>
   Widget _buildActions() {
     return Row(
       children: [
-        // Retake
         Expanded(
           child: _ActionButton(
-            icon: Icons.refresh_rounded,
-            label: 'Retake',
+            icon: widget.fromGallery ? Icons.photo_library_rounded : Icons.refresh_rounded,
+            label: widget.fromGallery ? 'Re-select' : 'Retake',
             onTap: _retake,
             isPrimary: false,
           ),
