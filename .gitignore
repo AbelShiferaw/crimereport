@@ -38,6 +38,9 @@ coverage/
 cdk.out/
 .cdk.staging/
 
+# ===== Diagrams =====
+docs/design/diagrams/icons/
+
 # ===== Environment & Secrets =====
 .env
 .env.*
