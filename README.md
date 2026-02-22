@@ -2,6 +2,10 @@
 
 Anonymous crime reporting mobile application.
 
+## Architecture
+
+![CrimeReport Full System Architecture](docs/design/diagrams/full_architecture.png)
+
 ## 📁 Project Structure
 
 ```
