@@ -108,69 +108,9 @@ Even with metadata-based location, bad actors could still upload irrelevant cont
 
 ## Architecture
 
-```mermaid
-flowchart TB
-    subgraph mobile [Flutter Mobile App]
-        UI[UI Layer]
-        Riverpod[Riverpod State]
-        REST[REST Client]
-        WS[Socket.io Client]
-        LocalDB[Local Cache]
-    end
-    
-    subgraph aws [AWS Cloud]
-        subgraph compute [Compute Layer]
-            ALB[Application Load Balancer]
-            Fargate[ECS Fargate Cluster]
-            NodeAPI[Node.js + Express + Socket.io]
-        end
-        
-        subgraph data [Data Layer]
-            Aurora[(Aurora PostgreSQL + PostGIS)]
-            Redis[ElastiCache Redis]
-        end
-        
-        subgraph media [Media Layer]
-            S3Raw[S3 Raw Uploads]
-            MediaConvert[MediaConvert]
-            S3Processed[S3 Processed]
-            CloudFront[CloudFront CDN]
-        end
-        
-        subgraph notify [Notifications]
-            SNS[SNS]
-        end
-    end
-    
-    subgraph external [External Services]
-        FCM[Firebase Cloud Messaging]
-        Mapbox[Mapbox GL]
-    end
-    
-    UI --> Riverpod
-    Riverpod --> REST
-    Riverpod --> WS
-    Riverpod --> LocalDB
-    REST -->|"HTTP"| ALB
-    WS -->|"WebSocket"| ALB
-    ALB --> Fargate
-    Fargate --> NodeAPI
-    NodeAPI --> Aurora
-    NodeAPI --> Redis
-    NodeAPI --> S3Processed
-    S3Processed --> CloudFront
-    CloudFront --> UI
-    
-    UI -->|"upload"| S3Raw
-    S3Raw -->|"trigger"| MediaConvert
-    MediaConvert --> S3Processed
-    
-    NodeAPI --> SNS
-    SNS --> FCM
-    FCM --> UI
-    
-    UI --> Mapbox
-```
+![CrimeReport Full System Architecture](diagrams/full_architecture.png)
+
+*Diagram source: [diagrams/full_architecture.py](diagrams/full_architecture.py) — regenerate with `python3 full_architecture.py`*
 
 ---
 
@@ -184,12 +124,16 @@ flowchart TB
 | Camera | camera + image_picker | Capture photos/videos for reports |
 | Real-time | **Socket.io client** | WebSocket connection for live updates |
 | Maps | **Mapbox GL Flutter** | Best for custom animated markers, Snap Map-style UI |
+| Edge Protection | **AWS WAF** | Rate-limiting and DDoS protection at the ALB |
 | Compute | **AWS ECS Fargate + ALB** | Always-on containers, WebSocket support, no cold starts |
-| API Server | **Node.js + Express + Socket.io** | REST + WebSocket in one server |
-| Database | **AWS Aurora PostgreSQL + PostGIS** | High performance, auto-scaling replicas |
+| API Server | **Node.js + Express + Socket.io** | REST (`/v1/*`) + WebSocket in one server |
+| Database | **AWS Aurora Serverless v2 + PostGIS** | Auto-scaling, cost-efficient for MVP, geo queries |
 | Cache | **AWS ElastiCache Redis** | Feed caching, rate limiting, Socket.io adapter |
 | Media Storage | **AWS S3 + CloudFront CDN** | Fast global video delivery |
 | Media Processing | **AWS MediaConvert** | Professional-grade transcoding, thumbnails, GIFs |
+| Content Moderation | **AWS Rekognition** | Auto-detect unsafe/illegal content before CDN |
+| Dead Letter Queue | **AWS SQS** | Capture failed media processing jobs |
+| Anti-spam | **reCAPTCHA v3 (Google)** | Bot/abuse prevention before report submission |
 | Push | **AWS SNS → Firebase Cloud Messaging** | High throughput, reliable delivery |
 
 ### Mobile Framework: Flutter
@@ -434,44 +378,20 @@ Note: `preview_gif_url` is a short animated loop for Snap Map thumbnails, genera
 
 ### Service Breakdown
 
-```mermaid
-flowchart LR
-    subgraph compute [Compute]
-        ALB[Application Load Balancer]
-        Fargate[ECS Fargate]
-        NodeJS[Node.js + Socket.io]
-    end
-    
-    subgraph database [Database]
-        Aurora[(Aurora PostgreSQL)]
-        PostGIS[PostGIS Extension]
-        Redis[ElastiCache Redis]
-    end
-    
-    subgraph media [Media Pipeline]
-        S3Upload[S3 Upload Bucket]
-        MediaConvert[MediaConvert Job]
-        S3Output[S3 Output Bucket]
-        CloudFront[CloudFront CDN]
-    end
-    
-    Aurora --- PostGIS
-    Fargate --- NodeJS
-    Redis ---|"Socket.io adapter"| NodeJS
-```
-
-### AWS Services Detail
-
-| Service | Purpose | Configuration |
-|---------|---------|---------------|
-| **Application Load Balancer** | HTTP + WebSocket routing | Public subnet, SSL termination |
-| **ECS Fargate** | Container hosting | 2-10 tasks, 1 vCPU / 2GB RAM each |
-| **Aurora PostgreSQL** | Primary database | db.r6g.large, PostGIS enabled, 1 read replica |
-| **ElastiCache Redis** | Caching + Socket.io adapter | cache.r6g.large, cluster mode |
-| **S3** | Media storage | 2 buckets (raw uploads, processed) |
-| **MediaConvert** | Video transcoding | On-demand, generates MP4 + thumbnails + GIF |
-| **CloudFront** | CDN for videos/images | Global edge locations, video optimization |
-| **SNS** | Push notification dispatch | Standard topic, FCM integration |
+| Service | Descriptive Name | Purpose | MVP Configuration |
+|---------|-----------------|---------|-------------------|
+| **AWS WAF** | Web Application Firewall | Rate-limiting + DDoS protection at the edge | 2000 req/5min per IP, managed rule sets |
+| **Application Load Balancer** | API Gateway ALB | HTTP + WebSocket routing | Public subnet, SSL termination, 30s connection draining |
+| **ECS Fargate** | Report API Service | Container hosting for Node.js API | 1 task, 0.25 vCPU / 0.5 GB RAM |
+| **Aurora Serverless v2** | Crime Reports DB | Primary database with geo queries | 0.5-1 ACU (auto-scales), PostGIS enabled |
+| **ElastiCache Redis** | Feed Cache + Socket Adapter | Feed caching, rate limiting, Socket.io pub/sub | cache.t4g.micro, single node |
+| **S3** | Evidence Upload + Processed Media Buckets | Media storage | 2 buckets (raw uploads, processed) |
+| **Lambda** | Transcode Trigger | Kicks off MediaConvert on S3 upload | With SQS dead letter queue for failures |
+| **MediaConvert** | Evidence Transcoder | Video transcoding | On-demand, generates MP4 + thumbnails + GIF |
+| **Rekognition** | Content Moderation | Auto-detect unsafe/illegal content | DetectModerationLabels on processed media |
+| **SQS** | Failed Jobs Dead Letter Queue | Capture failed transcode jobs for retry/investigation | Standard queue |
+| **CloudFront** | Media Delivery CDN | CDN for videos/images | Global edge locations, video optimization |
+| **SNS** | Notification Dispatcher | Push notification fan-out | Standard topic, FCM integration |
 
 ### Why Redis for Socket.io?
 
@@ -493,39 +413,57 @@ User A connects to Task 1    User B connects to Task 2
 ### Media Processing Pipeline
 
 ```
-User Upload → S3 Raw Bucket
+User Upload → Evidence Upload S3 Bucket
                 ↓ (S3 Event Trigger)
-            Lambda (validate, create job)
+            Transcode Trigger Lambda ──(on failure)──→ Failed Jobs DLQ (SQS)
                 ↓
-            MediaConvert Job
+            Evidence Transcoder (MediaConvert)
                 ↓ (outputs)
     ┌───────────┼───────────┐
     ↓           ↓           ↓
 720p MP4    Thumbnail    3s GIF
     └───────────┼───────────┘
                 ↓
-        S3 Processed Bucket
+        Content Moderation (Rekognition)
+            ↓ (safe content only)
+        Processed Media S3 Bucket
                 ↓
-        CloudFront CDN → App
+        Media Delivery CDN (CloudFront) → App
 ```
 
-Note: We still use a small Lambda just to trigger MediaConvert jobs on S3 upload events.
+Notes:
+- Transcode Trigger Lambda has an SQS dead letter queue so failed jobs are captured for retry/investigation.
+- Rekognition scans processed media for unsafe content before it reaches the CDN. Flagged content is quarantined.
 
-### Estimated Monthly Cost (Production Scale)
+### Estimated Monthly Cost
+
+#### MVP (Launch)
 
 | Service | Est. Cost | Notes |
 |---------|-----------|-------|
-| ECS Fargate | $100-200 | 2-4 tasks, 1 vCPU / 2GB each |
-| Application Load Balancer | $20-30 | Base + LCU charges |
-| Aurora PostgreSQL | $150-300 | db.r6g.large + read replica |
-| ElastiCache Redis | $100-150 | cache.r6g.large |
-| S3 Storage | $50-100 | ~2TB media |
-| CloudFront | $100-200 | ~5TB transfer |
-| MediaConvert | $50-100 | ~10K videos/month |
-| Lambda (MediaConvert trigger) | $5-10 | Minimal usage |
+| Aurora Serverless v2 | $45-90 | 0.5-1 ACU, auto-scales to near-zero |
+| Application Load Balancer | ~$20 | Base + LCU charges |
+| ECS Fargate | ~$9 | 1 task, 0.25 vCPU / 0.5 GB |
+| NAT Gateway | ~$32 | Fixed cost + data transfer |
+| ElastiCache Redis | ~$12 | cache.t4g.micro |
+| AWS WAF | ~$6 | WebACL + rate-limiting rules |
+| S3 + CloudFront | $5-10 | Pay-per-use at low volume |
+| MediaConvert + Lambda | $5-10 | Pay-per-use |
+| Rekognition | ~$1 | ~$1 per 1000 images |
+| **Total** | **~$130-180/mo** | Right-sized for 0-500 users |
+
+#### Production Scale
+
+| Service | Est. Cost | Notes |
+|---------|-----------|-------|
+| Aurora Serverless v2 | $150-300 | Auto-scales ACUs with load |
+| ECS Fargate | $100-200 | 2-10 tasks, 1 vCPU / 2GB each |
+| ElastiCache Redis | $100-150 | cache.r6g.large, cluster mode |
+| S3 + CloudFront | $150-300 | ~2TB media, ~5TB transfer |
+| Other (ALB, NAT, WAF, etc.) | $60-80 | Mostly fixed costs |
 | **Total** | **~$600-1100/mo** | Scales with usage |
 
-Note: Higher than serverless Lambda, but you get real-time WebSocket support and zero cold starts.
+Note: Same services, same architecture — just scale the instance sizes up as traffic grows.
 
 ---
 
