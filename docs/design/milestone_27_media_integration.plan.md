@@ -391,22 +391,19 @@ User Captures Media
         │                          │
         │<─────────────────────────┘
         ▼
-Get Presigned URL from API
+POST /api/reports (metadata)
+  → API creates report (status: processing)
+  → Returns reportId + presigned S3 URL
         │
         ▼
-Upload to S3 (with progress)
+Upload to S3 via presigned URL (with progress)
         │
-        ▼
-Create Report via API
+        ├─────(image)────> Step Functions: Rekognition → copy to media bucket → Ready
         │
-        ▼
-Complete Upload via API
-        │
-        ├─────(image)────> Ready Immediately
-        │
-        └─────(video)────> Processing...
+        └─────(video)────> Step Functions: Rekognition → MediaConvert → Processing...
                                │
                                ▼
+                     (Future) Step Functions updates DB + sends push
                      WebSocket: media:ready
                                │
                                ▼

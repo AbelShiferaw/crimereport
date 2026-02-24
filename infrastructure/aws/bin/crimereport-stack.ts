@@ -7,6 +7,7 @@ import { SecurityStack } from '../lib/network/security-stack';
 import { IamStack } from '../lib/iam/iam-stack';
 import { DatabaseStack } from '../lib/data/database-stack';
 import { CacheStack } from '../lib/data/cache-stack';
+import { MediaStack } from '../lib/media/media-stack';
 import { DEFAULT_TAGS } from '../lib/config/constants';
 
 const app = new cdk.App();
@@ -59,3 +60,8 @@ const cacheStack = new CacheStack(app, 'CrimeReport-Cache', {
 });
 cacheStack.addDependency(networkStack);
 cacheStack.addDependency(securityStack);
+
+const mediaStack = new MediaStack(app, 'CrimeReport-Media', {
+  env,
+  description: 'CrimeReport - S3 storage, CloudFront CDN, Step Functions media pipeline',
+});

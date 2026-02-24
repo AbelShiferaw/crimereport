@@ -130,8 +130,9 @@ Even with metadata-based location, bad actors could still upload irrelevant cont
 | Database | **AWS Aurora Serverless v2 + PostGIS** | Auto-scaling, cost-efficient for MVP, geo queries |
 | Cache | **AWS ElastiCache Redis** | Feed caching, rate limiting, Socket.io adapter |
 | Media Storage | **AWS S3 + CloudFront CDN** | Fast global video delivery |
+| Media Pipeline Orchestration | **AWS Step Functions** | Orchestrates moderation, transcoding, and post-processing |
 | Media Processing | **AWS MediaConvert** | Professional-grade transcoding, thumbnails, GIFs |
-| Content Moderation | **AWS Rekognition** | Auto-detect unsafe/illegal content before CDN |
+| Content Moderation | **AWS Rekognition** | Auto-detect unsafe/illegal content before transcoding |
 | Dead Letter Queue | **AWS SQS** | Capture failed media processing jobs |
 | Anti-spam | **reCAPTCHA v3 (Google)** | Bot/abuse prevention before report submission |
 | Push | **AWS SNS → Firebase Cloud Messaging** | High throughput, reliable delivery |
@@ -287,11 +288,17 @@ The Snap Map aesthetic (circular thumbnails, stacked clusters) is significantly 
 | Cloudflare R2 | No egress fees | Newer, less AWS integration | Adds complexity to stay in AWS ecosystem |
 | Firebase Storage | Easy setup | Less control, pricing at scale | Prefer AWS-native stack |
 
+### Media Pipeline Orchestration: AWS Step Functions
+
+**What it is:** Step Functions is AWS's workflow orchestration service. It defines a state machine that coordinates multiple AWS services in sequence, with branching, error handling, and retries built in.
+
+**How we're using it:** When a video/image is uploaded to S3, an EventBridge rule triggers a Step Functions state machine that: (1) calls **Rekognition** to check content safety - if flagged, deletes the file and stops, (2) invokes a **Lambda** that builds and submits a **MediaConvert** job to produce a 720p MP4, Thumbnail JPG, and 3-second GIF, (3) (future) waits for completion, updates the database, and sends a push notification.
+
 ### Media Processing: AWS MediaConvert
 
 **What it is:** MediaConvert is AWS's file-based video transcoding service. It converts video files into formats optimized for playback on different devices.
 
-**How we're using it:** When a video is uploaded to S3, a Lambda function triggers MediaConvert to create: (1) **720p MP4** - optimized for mobile playback, (2) **Thumbnail JPG** - first frame for loading states, (3) **3-second GIF** - animated preview for map markers.
+**How we're using it:** A Step Functions workflow invokes a Lambda that submits a MediaConvert job to create: (1) **720p MP4** - optimized for mobile playback, (2) **Thumbnail JPG** - first frame for loading states, (3) **3-second GIF** - animated preview for map markers.
 
 **Why MediaConvert over alternatives:**
 
@@ -386,10 +393,11 @@ Note: `preview_gif_url` is a short animated loop for Snap Map thumbnails, genera
 | **Aurora Serverless v2** | Crime Reports DB | Primary database with geo queries | 0.5-1 ACU (auto-scales), PostGIS enabled |
 | **ElastiCache Redis** | Feed Cache + Socket Adapter | Feed caching, rate limiting, Socket.io pub/sub | cache.t4g.micro, single node |
 | **S3** | Evidence Upload + Processed Media Buckets | Media storage | 2 buckets (raw uploads, processed) |
-| **Lambda** | Transcode Trigger | Kicks off MediaConvert on S3 upload | With SQS dead letter queue for failures |
+| **Step Functions** | Media Processing Pipeline | Orchestrates moderation + transcoding workflow | S3 event (via EventBridge) triggers state machine |
+| **Lambda** | MediaConvert Job Builder | Builds and submits MediaConvert job | Invoked by Step Functions, not directly by S3 |
 | **MediaConvert** | Evidence Transcoder | Video transcoding | On-demand, generates MP4 + thumbnails + GIF |
-| **Rekognition** | Content Moderation | Auto-detect unsafe/illegal content | DetectModerationLabels on processed media |
-| **SQS** | Failed Jobs Dead Letter Queue | Capture failed transcode jobs for retry/investigation | Standard queue |
+| **Rekognition** | Content Moderation | Auto-detect unsafe/illegal content | DetectModerationLabels before transcoding (native Step Functions integration) |
+| **SQS** | Failed Jobs Dead Letter Queue | Capture failed pipeline executions for retry/investigation | Standard queue |
 | **CloudFront** | Media Delivery CDN | CDN for videos/images | Global edge locations, video optimization |
 | **SNS** | Notification Dispatcher | Push notification fan-out | Standard topic, FCM integration |
 
@@ -413,27 +421,43 @@ User A connects to Task 1    User B connects to Task 2
 ### Media Processing Pipeline
 
 ```
-User Upload → Evidence Upload S3 Bucket
-                ↓ (S3 Event Trigger)
-            Transcode Trigger Lambda ──(on failure)──→ Failed Jobs DLQ (SQS)
+Phase 1 (Synchronous):
+    App → POST /api/reports {type, description, location}
+        → API creates report (status: 'processing'), returns reportId + presigned S3 URL
+    App → PUT presigned URL → Evidence Upload S3 Bucket
+
+Phase 2 (Asynchronous - Step Functions Pipeline):
+    Evidence Upload S3 Bucket
+                ↓ (EventBridge: s3:ObjectCreated)
+            Step Functions State Machine
                 ↓
-            Evidence Transcoder (MediaConvert)
-                ↓ (outputs)
+        ┌── Rekognition: DetectModerationLabels ──┐
+        │                                          │
+    (safe)                                    (flagged)
+        │                                          │
+        ↓                                          ↓
+    Lambda: Build & Submit                  Delete from S3 → END
+    MediaConvert Job
+        ↓
+    Evidence Transcoder (MediaConvert)
+        ↓ (outputs)
     ┌───────────┼───────────┐
     ↓           ↓           ↓
 720p MP4    Thumbnail    3s GIF
     └───────────┼───────────┘
-                ↓
-        Content Moderation (Rekognition)
-            ↓ (safe content only)
-        Processed Media S3 Bucket
-                ↓
-        Media Delivery CDN (CloudFront) → App
+        ↓
+    Processed Media S3 Bucket
+        ↓
+    Media Delivery CDN (CloudFront) → App
+
+    (Future steps: update database with CDN URLs, send push notification)
 ```
 
 Notes:
-- Transcode Trigger Lambda has an SQS dead letter queue so failed jobs are captured for retry/investigation.
-- Rekognition scans processed media for unsafe content before it reaches the CDN. Flagged content is quarantined.
+- EventBridge triggers the Step Functions state machine when objects are created in the uploads bucket.
+- Rekognition checks content safety BEFORE transcoding. Flagged content is deleted immediately and never processed.
+- A small Lambda remains for MediaConvert job submission (endpoint discovery + job configuration).
+- Step Functions handles retries and error routing to the SQS dead letter queue.
 
 ### Estimated Monthly Cost
 
@@ -639,17 +663,19 @@ flowchart TB
 - Community flagging - reports hidden after X flags
 - Optional: ML-based content moderation for media
 
-### Media Processing Pipeline (AWS MediaConvert)
+### Media Processing Pipeline (Step Functions + MediaConvert)
 
-- Upload triggers Lambda via S3 event notification
-- Lambda creates MediaConvert job with outputs:
+- Upload to S3 triggers EventBridge, which starts a Step Functions state machine
+- Step 1: Rekognition checks content safety (native integration, no Lambda needed)
+- Step 2: If flagged, file is deleted from S3 and pipeline stops
+- Step 3: If safe, a Lambda builds and submits a MediaConvert job with outputs:
   - **720p MP4** - Main video for feed playback
   - **Thumbnail JPG** - First frame for loading states
   - **3-second GIF** - Animated preview for map markers
 - MediaConvert strips metadata automatically
 - Processed files stored in S3 output bucket
 - CloudFront CDN serves media globally with low latency
-- Lambda updates database with all generated URLs
+- (Future) Step Functions updates database with CDN URLs and sends push notification
 
 ---
 
@@ -869,7 +895,7 @@ Development is broken into reviewable milestones. After each milestone, review t
 
 | # | Milestone | Deliverable |
 |---|-----------|-------------|
-| 29 | Testing | App stable, major bugs fixed |
+| 29 | Testing & QA | Integration tests (Jest + AWS SDK), E2E tests, load tests, beta testing |
 | 30 | Launch Prep | Ready for submission |
 | 31 | App Store Submission | App live in stores |
 
@@ -985,8 +1011,9 @@ Development is broken into reviewable milestones. After each milestone, review t
 
 - S3 buckets (raw uploads, processed)
 - CloudFront distribution
-- MediaConvert job template
-- Lambda trigger for processing
+- Step Functions state machine (Rekognition moderation + MediaConvert transcoding)
+- Lambda for MediaConvert job building (invoked by Step Functions)
+- EventBridge rule for S3 upload events
 
 **Milestone 17: ECS Fargate Setup**
 
@@ -1031,10 +1058,10 @@ Development is broken into reviewable milestones. After each milestone, review t
 
 **Milestone 22: Media Upload Flow**
 
-- Presigned S3 URL generation
-- Upload status tracking
-- MediaConvert webhook handling
-- Return processed URLs
+- Two-phase upload: POST report metadata first, then upload to S3 via presigned URL
+- Upload status tracking (processing -> active)
+- Step Functions pipeline handles moderation + transcoding automatically
+- Return processed CDN URLs
 
 **Milestone 23: WebSocket Server**
 
@@ -1090,12 +1117,18 @@ Development is broken into reviewable milestones. After each milestone, review t
 
 <summary><strong>Phase E: Testing & Launch (Click to expand)</strong></summary>
 
-**Milestone 29: Testing**
+**Milestone 29: Testing & QA**
 
+- **Unit Tests** (ongoing): CDK template assertions, Flutter widget/logic tests, API handler tests
+- **Integration Tests (Option A → C)**:
+  - Phase B-C: AWS CLI test scripts (`scripts/`) for manual verification after deploys (Option A)
+  - Phase D-E: Migrate to Jest + AWS SDK integration tests (`test/integration/`) that run against deployed environments (Option C)
+  - Test pipeline: upload → transcode → CDN, API → DB, WebSocket broadcasts, push notifications
+- **End-to-End Tests**: Flutter integration tests against staging backend
 - Beta testing on iOS + Android
-- Load testing backend
-- Edge cases (slow network, large files)
-- Bug fixes
+- Load testing backend (k6 or Artillery against staging)
+- Edge cases (slow network, large files, offline mode)
+- Bug fixes and regression testing
 
 **Milestone 30: Launch Prep**
 

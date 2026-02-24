@@ -169,114 +169,21 @@ resource "aws_media_convert_queue" "main" {
 }
 ```
 
-### 4. S3 Event → Lambda → MediaConvert
-```hcl
-# infrastructure/transcode_lambda.tf
+### 4. Step Functions Media Processing Pipeline
 
-resource "aws_lambda_function" "transcode_trigger" {
-  filename         = "lambda/transcode_trigger.zip"
-  function_name    = "reportcrime-transcode-trigger"
-  role            = aws_iam_role.lambda_transcode.arn
-  handler         = "index.handler"
-  runtime         = "nodejs18.x"
-  
-  environment {
-    variables = {
-      MEDIACONVERT_ENDPOINT = data.aws_media_convert_queue.main.arn
-      MEDIACONVERT_ROLE     = aws_iam_role.mediaconvert.arn
-      OUTPUT_BUCKET         = aws_s3_bucket.media.bucket
-    }
-  }
-}
+The media pipeline uses Step Functions to orchestrate content moderation and transcoding:
 
-resource "aws_s3_bucket_notification" "uploads" {
-  bucket = aws_s3_bucket.uploads.id
-  
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.transcode_trigger.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = "videos/"
-  }
-}
-```
+1. **EventBridge Rule** - Catches S3 `ObjectCreated` events from the uploads bucket (prefix `videos/`) and triggers the state machine
+2. **Rekognition Check** - Native Step Functions integration calls `DetectModerationLabels` on the uploaded image/video frame
+3. **Choice State** - If moderation labels are found, branch to delete; otherwise proceed to transcode
+4. **Lambda: MediaConvert Job Builder** - Builds and submits the MediaConvert job (handles endpoint discovery + job configuration)
+5. **Error Handling** - Failed executions route to an SQS dead letter queue
 
-### 5. Lambda Transcode Trigger
-```javascript
-// lambda/transcode_trigger/index.js
+The CDK code in `infrastructure/aws/lib/media/media-stack.ts` defines the state machine, EventBridge rule, and all IAM permissions. The Lambda code lives in `backend/functions/transcode-trigger/index.ts`.
 
-const { MediaConvertClient, CreateJobCommand } = require('@aws-sdk/client-mediaconvert');
+### 5. Lambda MediaConvert Job Builder
 
-exports.handler = async (event) => {
-  const bucket = event.Records[0].s3.bucket.name;
-  const key = event.Records[0].s3.object.key;
-  
-  const client = new MediaConvertClient({
-    endpoint: process.env.MEDIACONVERT_ENDPOINT,
-  });
-  
-  const jobParams = {
-    Role: process.env.MEDIACONVERT_ROLE,
-    Settings: {
-      Inputs: [{
-        FileInput: `s3://${bucket}/${key}`,
-        AudioSelectors: { "Audio Selector 1": { DefaultSelection: "DEFAULT" } },
-      }],
-      OutputGroups: [{
-        Name: "File Group",
-        OutputGroupSettings: {
-          Type: "FILE_GROUP_SETTINGS",
-          FileGroupSettings: {
-            Destination: `s3://${process.env.OUTPUT_BUCKET}/videos/`,
-          },
-        },
-        Outputs: [
-          // Main video (720p)
-          {
-            VideoDescription: {
-              Width: 1280,
-              Height: 720,
-              CodecSettings: {
-                Codec: "H_264",
-                H264Settings: {
-                  RateControlMode: "QVBR",
-                  QvbrSettings: { QvbrQualityLevel: 7 },
-                },
-              },
-            },
-            AudioDescriptions: [{
-              CodecSettings: {
-                Codec: "AAC",
-                AacSettings: { Bitrate: 128000 },
-              },
-            }],
-            ContainerSettings: { Container: "MP4" },
-          },
-          // Thumbnail
-          {
-            VideoDescription: {
-              Width: 480,
-              Height: 480,
-              CodecSettings: {
-                Codec: "FRAME_CAPTURE",
-                FrameCaptureSettings: {
-                  FramerateNumerator: 1,
-                  FramerateDenominator: 5,  // 1 frame per 5 seconds
-                  MaxCaptures: 1,
-                },
-              },
-            },
-            ContainerSettings: { Container: "RAW" },
-          },
-        ],
-      }],
-    },
-  };
-  
-  await client.send(new CreateJobCommand(jobParams));
-  
-  return { statusCode: 200 };
-};
-```
+The Lambda is no longer the orchestrator - it's a single step invoked by Step Functions. It receives `{ bucket, key }` as input, discovers the MediaConvert endpoint, builds the job settings (720p MP4, thumbnail, GIF), and submits the job via `CreateJob`.
 
 ## Media Flow
 ```
@@ -285,13 +192,21 @@ Mobile App
     ▼ (presigned URL upload)
 S3 Uploads Bucket
     │
-    ▼ (S3 Event)
-Lambda Trigger
+    ▼ (EventBridge: ObjectCreated)
+Step Functions State Machine
+    │
+    ▼ (Step 1: Rekognition)
+Content Moderation
+    │
+    ├── Flagged → Delete from S3 → END
+    │
+    ▼ (Step 2: Safe)
+Lambda: MediaConvert Job Builder
     │
     ▼ (create job)
 MediaConvert
     │
-    ▼ (720p + thumbnail)
+    ▼ (720p + thumbnail + GIF)
 S3 Media Bucket
     │
     ▼ (cached)
@@ -302,20 +217,19 @@ Mobile App (playback)
 ```
 
 ## Deliverable Checklist
-- [ ] Uploads bucket created with CORS
+- [ ] Uploads bucket created with CORS and EventBridge notifications
 - [ ] Media bucket created (private)
 - [ ] CloudFront distribution serving media bucket
-- [ ] MediaConvert role and queue created
-- [ ] Lambda trigger deployed
-- [ ] S3 event notification configured
-- [ ] Test: upload video → auto-transcoded
+- [ ] MediaConvert role created
+- [ ] Step Functions state machine deployed (Rekognition + Lambda + error handling)
+- [ ] EventBridge rule triggers state machine on S3 upload
+- [ ] Lambda for MediaConvert job building deployed
+- [ ] SQS dead letter queue for failed executions
+- [ ] Test: upload video → Rekognition check → auto-transcoded
 - [ ] Test: thumbnail generated
 - [ ] Test: CDN serves processed video
 
-## Files (6 total)
-1. `infrastructure/storage.tf` - S3 buckets
-2. `infrastructure/cdn.tf` - CloudFront
-3. `infrastructure/mediaconvert.tf` - MediaConvert
-4. `infrastructure/transcode_lambda.tf` - Lambda config
-5. `lambda/transcode_trigger/index.js` - Trigger code
-6. `lambda/transcode_trigger/package.json` - Dependencies
+## Files
+1. `infrastructure/aws/lib/media/media-stack.ts` - S3 buckets, CloudFront, Step Functions, EventBridge, Lambda, DLQ
+2. `infrastructure/aws/test/media/media-stack.test.ts` - Unit tests
+3. `backend/functions/transcode-trigger/index.ts` - MediaConvert job builder Lambda code

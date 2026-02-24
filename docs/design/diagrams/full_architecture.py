@@ -3,7 +3,7 @@ from diagrams.aws.network import ELB, CloudFront as CF
 from diagrams.aws.compute import Fargate, Lambda
 from diagrams.aws.database import Aurora, ElastiCache
 from diagrams.aws.storage import S3
-from diagrams.aws.integration import SNS, SQS
+from diagrams.aws.integration import SNS, SQS, StepFunctions, Eventbridge
 from diagrams.aws.media import ElementalMediaconvert
 from diagrams.aws.ml import Rekognition
 from diagrams.aws.security import WAF
@@ -76,10 +76,12 @@ with Diagram(
 
         with Cluster("Media Pipeline", graph_attr={"style": "rounded", "bgcolor": "#FBE9E7"}):
             s3_raw = S3("Evidence Upload\nS3 Bucket")
-            lam = Lambda("Transcode\nTrigger Lambda")
+            eb = Eventbridge("Upload Event\n(EventBridge)")
+            sfn = StepFunctions("Media Processing\nPipeline\n(Step Functions)")
+            rekognition = Rekognition("Content\nModeration\n(Rekognition)")
+            lam = Lambda("MediaConvert\nJob Builder\n(Lambda)")
             dlq = SQS("Failed Jobs\nDead Letter Queue\n(SQS)")
             media_convert = ElementalMediaconvert("Evidence\nTranscoder\n(MediaConvert)")
-            rekognition = Rekognition("Content\nModeration\n(Rekognition)")
             s3_processed = S3("Processed Media\nS3 Bucket")
             cloudfront = CF("Media Delivery\nCDN\n(CloudFront)")
 
@@ -106,11 +108,13 @@ with Diagram(
     fargate >> Edge(label="Cache +\nPub/Sub", color="red") >> redis
 
     app >> Edge(label="Upload", color="orange") >> s3_raw
-    s3_raw >> Edge(label="S3 Event", color="gray") >> lam
-    lam >> Edge(label="On failure", color="crimson", style="dashed") >> dlq
-    lam >> Edge(label="Create Job", color="gray") >> media_convert
-    media_convert >> Edge(label="MP4 + Thumb\n+ GIF", color="gray") >> rekognition
-    rekognition >> Edge(label="Safe content\nonly", color="green") >> s3_processed
+    s3_raw >> Edge(label="ObjectCreated", color="gray") >> eb
+    eb >> Edge(label="Trigger", color="gray") >> sfn
+    sfn >> Edge(label="On failure", color="crimson", style="dashed") >> dlq
+    sfn >> Edge(label="Step 1:\nModerate", color="gray") >> rekognition
+    rekognition >> Edge(label="Safe", color="green") >> lam
+    lam >> Edge(label="Step 2:\nCreate Job", color="gray") >> media_convert
+    media_convert >> Edge(label="MP4 + Thumb\n+ GIF", color="gray") >> s3_processed
     s3_processed >> cloudfront
     cloudfront >> Edge(label="Stream\nMedia", color="darkcyan") >> app
 

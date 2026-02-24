@@ -307,37 +307,40 @@ module.exports = new MediaRepository();
 
 ## Upload Flow Diagram
 ```
-Mobile App                  API Server                  S3/MediaConvert
+Mobile App                  API Server                  S3 / Step Functions Pipeline
     │                           │                           │
-    │  POST /presigned-url      │                           │
+    │  POST /api/reports        │                           │
+    │  {type, desc, location}   │                           │
     │ ─────────────────────────>│                           │
-    │                           │                           │
-    │  { uploadUrl, uploadId }  │                           │
+    │                           │  INSERT report            │
+    │                           │  (status: processing)     │
+    │  { reportId,              │                           │
+    │    uploadUrl (presigned) }│                           │
     │ <─────────────────────────│                           │
     │                           │                           │
     │  PUT uploadUrl (file)     │                           │
     │ ─────────────────────────────────────────────────────>│
     │                           │                           │
-    │  200 OK                   │                           │
-    │ <─────────────────────────────────────────────────────│
+    │  200 OK                   │      EventBridge ──> Step Functions:
+    │ <─────────────────────────────────────────────────────│  1. Rekognition check
+    │                           │                           │  2. MediaConvert transcode
+    │                           │                           │  3. (Future) Update DB
+    │                           │                           │  4. (Future) Push notification
     │                           │                           │
-    │  POST /complete           │                           │
-    │ ─────────────────────────>│                           │
-    │                           │  (video triggers          │
-    │                           │   MediaConvert)           │
-    │  { media, status }        │                           │
+    │  (Later) WebSocket:       │                           │
+    │  media:ready event        │                           │
     │ <─────────────────────────│                           │
 ```
 
 ## Deliverable Checklist
-- [ ] POST `/presigned-url` generates valid S3 URL
+- [ ] POST `/api/reports` creates report + generates presigned URL in one call
 - [ ] File type validation working
 - [ ] File size limits enforced
 - [ ] Client can upload directly to S3
-- [ ] POST `/complete` verifies upload exists
-- [ ] Images get direct CDN URL
-- [ ] Videos get "processing" status
-- [ ] MediaConvert webhook updates video status
+- [ ] S3 upload triggers Step Functions pipeline via EventBridge
+- [ ] Rekognition moderation check runs before transcoding
+- [ ] Flagged content is deleted, never transcoded
+- [ ] Safe content is transcoded by MediaConvert
 - [ ] CDN URLs work for playback
 - [ ] Error handling for failed uploads
 
