@@ -197,7 +197,7 @@ class MapFocusPulse {
     _pulsePhase = 0.0;
   }
 
-  void _animatePulse() {
+  Future<void> _animatePulse() async {
     if (_focusPulse == null || _pulseManager == null) return;
 
     _pulsePhase = (_pulsePhase + FocusPulseConfig.phaseStep) % 1.0;
@@ -212,7 +212,15 @@ class MapFocusPulse {
 
     _focusPulse!.circleRadius = radius;
     _focusPulse!.circleOpacity = opacity;
-    _pulseManager!.update(_focusPulse!);
+
+    try {
+      await _pulseManager!.update(_focusPulse!);
+    } catch (_) {
+      _stopAnimation();
+      _focusPulse = null;
+      _focusedReportId = null;
+      _isPulseVisible = false;
+    }
   }
 
   /// Cancel all timers. Call from the widget's dispose.

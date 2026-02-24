@@ -11,6 +11,13 @@ export const REDIS_PORT = 6379;
 
 export const WAF_RATE_LIMIT = 2000;
 
+export const DB_NAME = 'crimereport';
+export const DB_ADMIN_USER = 'crimereport_admin';
+export const DB_MIN_ACU = 0.5;
+export const DB_MAX_ACU = 4;
+
+export const REDIS_NODE_TYPE = 'cache.t4g.micro';
+
 export const DEFAULT_TAGS: Record<string, string> = {
   Project: 'CrimeReport',
   ManagedBy: 'CDK',
