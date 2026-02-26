@@ -8,6 +8,7 @@ import { IamStack } from '../lib/iam/iam-stack';
 import { DatabaseStack } from '../lib/data/database-stack';
 import { CacheStack } from '../lib/data/cache-stack';
 import { MediaStack } from '../lib/media/media-stack';
+import { ComputeStack } from '../lib/compute/compute-stack';
 import { DEFAULT_TAGS } from '../lib/config/constants';
 
 const app = new cdk.App();
@@ -65,3 +66,22 @@ const mediaStack = new MediaStack(app, 'CrimeReport-Media', {
   env,
   description: 'CrimeReport - S3 storage, CloudFront CDN, Step Functions media pipeline',
 });
+
+const computeStack = new ComputeStack(app, 'CrimeReport-Compute', {
+  env,
+  description: 'CrimeReport - ECS Fargate API service with ALB and auto-scaling',
+  vpc: networkStack.vpc,
+  albSecurityGroup: securityStack.albSecurityGroup,
+  ecsSecurityGroup: securityStack.ecsSecurityGroup,
+  taskRole: iamStack.ecsTaskRole,
+  dbSecret: databaseStack.cluster.secret!,
+  redisEndpoint: cacheStack.redisEndpoint,
+  redisPort: cacheStack.redisPort,
+  wafAclArn: wafStack.webAclArn,
+});
+computeStack.addDependency(networkStack);
+computeStack.addDependency(securityStack);
+computeStack.addDependency(iamStack);
+computeStack.addDependency(databaseStack);
+computeStack.addDependency(cacheStack);
+computeStack.addDependency(wafStack);

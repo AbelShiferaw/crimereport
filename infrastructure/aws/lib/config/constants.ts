@@ -18,6 +18,15 @@ export const DB_MAX_ACU = 4;
 
 export const REDIS_NODE_TYPE = 'cache.t4g.micro';
 
+export const ECS_CPU = 256;
+export const ECS_MEMORY = 512;
+export const ECS_DESIRED_COUNT = 1;
+export const ECS_MIN_TASKS = 1;
+export const ECS_MAX_TASKS = 10;
+export const ECS_CPU_TARGET_PERCENT = 70;
+export const ECR_MAX_IMAGE_COUNT = 10;
+export const LOG_RETENTION_DAYS = 30;
+
 export const DEFAULT_TAGS: Record<string, string> = {
   Project: 'CrimeReport',
   ManagedBy: 'CDK',

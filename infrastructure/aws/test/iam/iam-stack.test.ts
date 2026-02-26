@@ -14,36 +14,6 @@ describe('IamStack', () => {
     template = Template.fromStack(stack);
   });
 
-  test('ECS execution role assumes ecs-tasks.amazonaws.com', () => {
-    template.hasResourceProperties('AWS::IAM::Role', {
-      RoleName: `${PROJECT_PREFIX}-ecs-execution`,
-      AssumeRolePolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({
-            Action: 'sts:AssumeRole',
-            Effect: 'Allow',
-            Principal: { Service: 'ecs-tasks.amazonaws.com' },
-          }),
-        ]),
-      },
-    });
-  });
-
-  test('execution role has AmazonECSTaskExecutionRolePolicy attached', () => {
-    template.hasResourceProperties('AWS::IAM::Role', {
-      RoleName: `${PROJECT_PREFIX}-ecs-execution`,
-      ManagedPolicyArns: Match.arrayWith([
-        Match.objectLike({
-          'Fn::Join': Match.arrayWith([
-            Match.arrayWith([
-              Match.stringLikeRegexp('AmazonECSTaskExecutionRolePolicy'),
-            ]),
-          ]),
-        }),
-      ]),
-    });
-  });
-
   test('ECS task role assumes ecs-tasks.amazonaws.com', () => {
     template.hasResourceProperties('AWS::IAM::Role', {
       RoleName: `${PROJECT_PREFIX}-ecs-task`,

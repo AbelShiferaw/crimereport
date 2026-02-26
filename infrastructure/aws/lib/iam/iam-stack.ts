@@ -4,25 +4,12 @@ import { Construct } from 'constructs';
 import { PROJECT_PREFIX } from '../config/constants';
 
 export class IamStack extends cdk.Stack {
-  public readonly ecsExecutionRole: iam.Role;
   public readonly ecsTaskRole: iam.Role;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
     const ecsPrincipal = new iam.ServicePrincipal('ecs-tasks.amazonaws.com');
-
-    this.ecsExecutionRole = new iam.Role(this, 'EcsExecutionRole', {
-      roleName: `${PROJECT_PREFIX}-ecs-execution`,
-      assumedBy: ecsPrincipal,
-      description: 'ECS execution role - ECR image pull and CloudWatch log delivery',
-    });
-
-    this.ecsExecutionRole.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName(
-        'service-role/AmazonECSTaskExecutionRolePolicy',
-      ),
-    );
 
     this.ecsTaskRole = new iam.Role(this, 'EcsTaskRole', {
       roleName: `${PROJECT_PREFIX}-ecs-task`,
@@ -79,11 +66,6 @@ export class IamStack extends cdk.Stack {
         ],
       }),
     );
-
-    new cdk.CfnOutput(this, 'EcsExecutionRoleArn', {
-      value: this.ecsExecutionRole.roleArn,
-      description: 'ECS Execution Role ARN',
-    });
 
     new cdk.CfnOutput(this, 'EcsTaskRoleArn', {
       value: this.ecsTaskRole.roleArn,
