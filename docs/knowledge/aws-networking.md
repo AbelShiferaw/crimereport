@@ -2,22 +2,6 @@
 
 Personal reference notes for understanding the AWS networking layer in the CrimeReport project.
 
----
-
-## Visual Overviews
-
-### VPC Network Topology
-![VPC Topology](diagrams/vpc_topology.png)
-
-### Security Group Trust Chain
-![Security Groups](diagrams/security_groups.png)
-
-### API Request Flow (through VPC)
-![API Request Flow](diagrams/request_flow_api.png)
-
-### Media Upload Flow (bypasses VPC)
-![Media Upload Flow](diagrams/request_flow_media.png)
-
 *Diagram sources are in [diagrams/](diagrams/) -- regenerate with `python3 <script>.py`*
 
 ---
@@ -138,6 +122,12 @@ Each subnet gets a `/24` CIDR block (256 IPs). AWS reserves 5 IPs per subnet, so
 | Private-A | us-east-1a | 10.0.2.0/24 | PRIVATE_WITH_EGRESS | ECS, Aurora, Redis |
 | Private-B | us-east-1b | 10.0.3.0/24 | PRIVATE_WITH_EGRESS | ECS, Aurora (failover) |
 
+Here's the full VPC topology showing both AZs, all subnets, gateways, and resource placement:
+
+<p align="center">
+  <img src="diagrams/vpc_topology.png" alt="VPC Network Topology" width="700">
+</p>
+
 ---
 
 ## Internet Gateway (IGW)
@@ -255,13 +245,17 @@ Egress:
 
 ### The Trust Chain
 
+Each layer only accepts traffic from the layer directly above it. An attacker would need to compromise each layer sequentially to reach the database. This is **defense-in-depth**.
+
 ```
 Internet ──(80/443)──> ALB SG ──(3000)──> ECS SG ──(5432)──> DB SG
                                               │
                                               └──(6379)──> Redis SG
 ```
 
-Each layer only accepts traffic from the layer directly above it. An attacker would need to compromise each layer sequentially to reach the database. This is **defense-in-depth**.
+<p align="center">
+  <img src="diagrams/security_groups.png" alt="Security Group Trust Chain" width="650">
+</p>
 
 ### Security Group vs. NACL
 
@@ -316,6 +310,10 @@ Internet → WAF (inspect/block) → ALB → ECS
 8. Response flows back: Fargate → ALB → IGW → User
 ```
 
+<p align="center">
+  <img src="diagrams/request_flow_api.png" alt="API Request Flow" width="600">
+</p>
+
 ### Media Upload (user uploads a video)
 
 ```
@@ -330,6 +328,10 @@ Internet → WAF (inspect/block) → ALB → ECS
 5. If safe: copy to media bucket (images) or Lambda triggers MediaConvert (videos)
 6. CloudFront CDN serves processed media to the app
 ```
+
+<p align="center">
+  <img src="diagrams/request_flow_media.png" alt="Media Upload Flow" width="600">
+</p>
 
 ### Key Insight: Not Everything Lives in the VPC
 
