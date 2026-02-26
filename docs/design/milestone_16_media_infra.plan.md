@@ -171,13 +171,15 @@ resource "aws_media_convert_queue" "main" {
 
 ### 4. Step Functions Media Processing Pipeline
 
-The media pipeline uses Step Functions to orchestrate content moderation and transcoding:
+The media pipeline uses Step Functions to orchestrate content moderation and transcoding with separate paths for images and videos:
 
-1. **EventBridge Rule** - Catches S3 `ObjectCreated` events from the uploads bucket (prefix `videos/`) and triggers the state machine
-2. **Rekognition Check** - Native Step Functions integration calls `DetectModerationLabels` on the uploaded image/video frame
-3. **Choice State** - If moderation labels are found, branch to delete; otherwise proceed to transcode
-4. **Lambda: MediaConvert Job Builder** - Builds and submits the MediaConvert job (handles endpoint discovery + job configuration)
-5. **Error Handling** - Failed executions route to an SQS dead letter queue
+1. **EventBridge Rule** - Catches S3 `ObjectCreated` events from the uploads bucket (prefixes `videos/` and `images/`) and triggers the state machine
+2. **File Type Routing** - `Choice` state routes by key prefix: `images/*` or `videos/*`
+3. **Image Path (sync)** - Rekognition `DetectModerationLabels` runs synchronously. Safe images are copied directly to the media bucket via S3 `copyObject`. No transcoding needed.
+4. **Video Path (async)** - Rekognition `StartContentModeration` starts async analysis. A polling loop (`Wait 20s` → `GetContentModeration` → check `JobStatus`) waits for completion. Safe videos go to Lambda for MediaConvert transcoding.
+5. **Flagged Content** - Both paths delete flagged content from S3 immediately.
+6. **Retries** - All Rekognition and S3 task states have retry policies with exponential backoff.
+7. **Error Handling** - Failed executions route to an SQS dead letter queue.
 
 The CDK code in `infrastructure/aws/lib/media/media-stack.ts` defines the state machine, EventBridge rule, and all IAM permissions. The Lambda code lives in `backend/functions/transcode-trigger/index.ts`.
 
@@ -189,31 +191,38 @@ The Lambda is no longer the orchestrator - it's a single step invoked by Step Fu
 ```
 Mobile App
     │
-    ▼ (presigned URL upload)
+    ▼ (presigned URL upload to images/ or videos/)
 S3 Uploads Bucket
     │
-    ▼ (EventBridge: ObjectCreated)
+    ▼ (EventBridge: ObjectCreated, prefix: images/ or videos/)
 Step Functions State Machine
     │
-    ▼ (Step 1: Rekognition)
-Content Moderation
-    │
-    ├── Flagged → Delete from S3 → END
-    │
-    ▼ (Step 2: Safe)
-Lambda: MediaConvert Job Builder
-    │
-    ▼ (create job)
-MediaConvert
-    │
-    ▼ (720p + thumbnail + GIF)
-S3 Media Bucket
-    │
-    ▼ (cached)
-CloudFront CDN
-    │
-    ▼
-Mobile App (playback)
+    ▼ (DetermineFileType)
+    ├──────────────────────────────┐
+    │                              │
+ images/*                      videos/*
+    │                              │
+    ▼                              ▼
+ Rekognition:                  Rekognition:
+ DetectModerationLabels        StartContentModeration (async)
+ (sync)                            │
+    │                              ▼
+    ├── Flagged → Delete       Wait 20s → GetContentModeration
+    │                              │
+    ▼ (safe)                   ┌─ JobStatus? ─┐
+ S3 Copy to                    │              │
+ Media Bucket            IN_PROGRESS     SUCCEEDED
+    │                  (loop back)          │
+    ▼                              ├── Flagged → Delete
+ IMAGE_READY                       │
+                                   ▼ (safe)
+                               Lambda: MediaConvert Job Builder
+                                   │
+                                   ▼
+                               MediaConvert (720p + thumb + GIF)
+                                   │
+                                   ▼
+                               S3 Media Bucket → CloudFront → App
 ```
 
 ## Deliverable Checklist
@@ -221,13 +230,14 @@ Mobile App (playback)
 - [ ] Media bucket created (private)
 - [ ] CloudFront distribution serving media bucket
 - [ ] MediaConvert role created
-- [ ] Step Functions state machine deployed (Rekognition + Lambda + error handling)
-- [ ] EventBridge rule triggers state machine on S3 upload
-- [ ] Lambda for MediaConvert job building deployed
+- [ ] Step Functions state machine deployed with image/video routing, Rekognition, retries
+- [ ] EventBridge rule triggers state machine on S3 upload (images/ and videos/ prefixes)
+- [ ] Lambda for MediaConvert job building deployed (videos only)
 - [ ] SQS dead letter queue for failed executions
-- [ ] Test: upload video → Rekognition check → auto-transcoded
-- [ ] Test: thumbnail generated
-- [ ] Test: CDN serves processed video
+- [ ] Test: upload image → sync Rekognition check → S3 copy to media bucket
+- [ ] Test: upload video → async Rekognition check → MediaConvert transcode
+- [ ] Test: flagged content deleted, never reaches media bucket
+- [ ] Test: CDN serves processed media
 
 ## Files
 1. `infrastructure/aws/lib/media/media-stack.ts` - S3 buckets, CloudFront, Step Functions, EventBridge, Lambda, DLQ

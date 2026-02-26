@@ -14,6 +14,20 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { PROJECT_PREFIX } from '../config/constants';
 
+const REKOGNITION_RETRY: sfn.RetryProps = {
+  errors: ['Rekognition.ThrottlingException', 'Rekognition.InternalServerError', 'States.TaskFailed'],
+  interval: cdk.Duration.seconds(5),
+  maxAttempts: 3,
+  backoffRate: 2,
+};
+
+const S3_RETRY: sfn.RetryProps = {
+  errors: ['States.TaskFailed'],
+  interval: cdk.Duration.seconds(3),
+  maxAttempts: 2,
+  backoffRate: 2,
+};
+
 export class MediaStack extends cdk.Stack {
   public readonly uploadsBucket: s3.Bucket;
   public readonly mediaBucket: s3.Bucket;
@@ -145,76 +159,29 @@ export class MediaStack extends cdk.Stack {
 
     // ── Step Functions State Machine ────────────────────────
 
-    const moderateContent = new tasks.CallAwsService(this, 'RekognitionModerate', {
-      service: 'rekognition',
-      action: 'detectModerationLabels',
-      parameters: {
-        Image: {
-          S3Object: {
-            Bucket: sfn.JsonPath.stringAt('$.bucket'),
-            Name: sfn.JsonPath.stringAt('$.key'),
-          },
-        },
-      },
-      iamResources: ['*'],
-      resultPath: '$.moderation',
-    });
-
-    const deleteFlagged = new tasks.CallAwsService(this, 'DeleteFlaggedContent', {
-      service: 's3',
-      action: 'deleteObject',
-      parameters: {
-        Bucket: sfn.JsonPath.stringAt('$.bucket'),
-        Key: sfn.JsonPath.stringAt('$.key'),
-      },
-      iamResources: [
-        this.uploadsBucket.arnForObjects('*'),
-      ],
-      resultPath: sfn.JsonPath.DISCARD,
-    });
-
-    const flaggedEnd = new sfn.Pass(this, 'ContentFlagged', {
-      result: sfn.Result.fromObject({ status: 'FLAGGED' }),
-    });
-
-    deleteFlagged.next(flaggedEnd);
-
-    const submitTranscode = new tasks.LambdaInvoke(this, 'SubmitTranscodeJob', {
-      lambdaFunction: this.transcodeLambda,
-      payload: sfn.TaskInput.fromObject({
-        bucket: sfn.JsonPath.stringAt('$.bucket'),
-        key: sfn.JsonPath.stringAt('$.key'),
-      }),
-      resultPath: '$.transcode',
-    });
-
-    const isFlagged = new sfn.Choice(this, 'IsFlagged')
-      .when(
-        sfn.Condition.isPresent('$.moderation.ModerationLabels[0]'),
-        deleteFlagged,
-      )
-      .otherwise(submitTranscode);
-
-    const definition = moderateContent.next(isFlagged);
+    const definition = this.buildPipelineDefinition();
 
     this.stateMachine = new sfn.StateMachine(this, 'MediaPipeline', {
       stateMachineName: `${PROJECT_PREFIX}-media-pipeline`,
       definitionBody: sfn.DefinitionBody.fromChainable(definition),
-      timeout: cdk.Duration.minutes(15),
+      timeout: cdk.Duration.minutes(30),
       tracingEnabled: true,
     });
+
+    this.uploadsBucket.grantRead(this.stateMachine);
+    this.mediaBucket.grantWrite(this.stateMachine);
 
     // ── EventBridge Rule: S3 Upload → Step Functions ────────
 
     const uploadRule = new events.Rule(this, 'UploadTriggerRule', {
       ruleName: `${PROJECT_PREFIX}-upload-trigger`,
-      description: 'Triggers media pipeline when video is uploaded to S3',
+      description: 'Triggers media pipeline when media is uploaded to S3',
       eventPattern: {
         source: ['aws.s3'],
         detailType: ['Object Created'],
         detail: {
           bucket: { name: [this.uploadsBucket.bucketName] },
-          object: { key: [{ prefix: 'videos/' }] },
+          object: { key: [{ prefix: 'videos/' }, { prefix: 'images/' }] },
         },
       },
     });
@@ -231,37 +198,154 @@ export class MediaStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'UploadsBucketName', {
       value: this.uploadsBucket.bucketName,
-      description: 'Raw uploads S3 bucket name',
     });
 
     new cdk.CfnOutput(this, 'MediaBucketName', {
       value: this.mediaBucket.bucketName,
-      description: 'Processed media S3 bucket name',
     });
 
     new cdk.CfnOutput(this, 'CdnDomainName', {
       value: this.distribution.distributionDomainName,
-      description: 'CloudFront CDN domain for media delivery',
     });
 
     new cdk.CfnOutput(this, 'StateMachineArn', {
       value: this.stateMachine.stateMachineArn,
-      description: 'Media processing pipeline state machine ARN',
     });
 
     new cdk.CfnOutput(this, 'TranscodeLambdaArn', {
       value: this.transcodeLambda.functionArn,
-      description: 'MediaConvert job builder Lambda ARN',
     });
 
     new cdk.CfnOutput(this, 'MediaConvertRoleArn', {
       value: this.mediaConvertRole.roleArn,
-      description: 'MediaConvert IAM role ARN',
     });
 
     new cdk.CfnOutput(this, 'DlqUrl', {
       value: this.deadLetterQueue.queueUrl,
-      description: 'Dead letter queue URL for failed pipeline executions',
     });
+  }
+
+  private buildPipelineDefinition(): sfn.IChainable {
+    // ── Shared: delete flagged content ────────────────────
+    const deleteFlagged = new tasks.CallAwsService(this, 'DeleteFlaggedContent', {
+      service: 's3',
+      action: 'deleteObject',
+      parameters: {
+        Bucket: sfn.JsonPath.stringAt('$.bucket'),
+        Key: sfn.JsonPath.stringAt('$.key'),
+      },
+      iamResources: [this.uploadsBucket.arnForObjects('*')],
+      resultPath: sfn.JsonPath.DISCARD,
+    }).addRetry(S3_RETRY);
+
+    const flaggedEnd = new sfn.Pass(this, 'ContentFlagged', {
+      result: sfn.Result.fromObject({ status: 'FLAGGED' }),
+    });
+    deleteFlagged.next(flaggedEnd);
+
+    // ── Image path: sync moderation ──────────────────────
+    const detectImageLabels = new tasks.CallAwsService(this, 'DetectImageModeration', {
+      service: 'rekognition',
+      action: 'detectModerationLabels',
+      parameters: {
+        Image: {
+          S3Object: {
+            Bucket: sfn.JsonPath.stringAt('$.bucket'),
+            Name: sfn.JsonPath.stringAt('$.key'),
+          },
+        },
+      },
+      iamResources: ['*'],
+      resultPath: '$.moderation',
+    }).addRetry(REKOGNITION_RETRY);
+
+    const copyToMedia = new tasks.CallAwsService(this, 'CopyImageToMedia', {
+      service: 's3',
+      action: 'copyObject',
+      parameters: {
+        Bucket: this.mediaBucket.bucketName,
+        CopySource: sfn.JsonPath.format('{}/{}',
+          sfn.JsonPath.stringAt('$.bucket'),
+          sfn.JsonPath.stringAt('$.key'),
+        ),
+        Key: sfn.JsonPath.stringAt('$.key'),
+      },
+      iamResources: [this.mediaBucket.arnForObjects('*')],
+      resultPath: sfn.JsonPath.DISCARD,
+    }).addRetry(S3_RETRY);
+
+    const imageComplete = new sfn.Pass(this, 'ImageProcessed', {
+      result: sfn.Result.fromObject({ status: 'IMAGE_READY' }),
+    });
+    copyToMedia.next(imageComplete);
+
+    const isImageFlagged = new sfn.Choice(this, 'IsImageFlagged')
+      .when(sfn.Condition.isPresent('$.moderation.ModerationLabels[0]'), deleteFlagged)
+      .otherwise(copyToMedia);
+
+    const imagePath = detectImageLabels.next(isImageFlagged);
+
+    // ── Video path: async moderation with polling ────────
+    const startVideoModeration = new tasks.CallAwsService(this, 'StartVideoModeration', {
+      service: 'rekognition',
+      action: 'startContentModeration',
+      parameters: {
+        Video: {
+          S3Object: {
+            Bucket: sfn.JsonPath.stringAt('$.bucket'),
+            Name: sfn.JsonPath.stringAt('$.key'),
+          },
+        },
+      },
+      iamResources: ['*'],
+      resultPath: '$.videoJob',
+    }).addRetry(REKOGNITION_RETRY);
+
+    const waitForModeration = new sfn.Wait(this, 'WaitForModeration', {
+      time: sfn.WaitTime.duration(cdk.Duration.seconds(20)),
+    });
+
+    const getVideoResults = new tasks.CallAwsService(this, 'GetVideoModerationResults', {
+      service: 'rekognition',
+      action: 'getContentModeration',
+      parameters: {
+        JobId: sfn.JsonPath.stringAt('$.videoJob.JobId'),
+      },
+      iamResources: ['*'],
+      resultPath: '$.videoResults',
+    }).addRetry(REKOGNITION_RETRY);
+
+    const submitTranscode = new tasks.LambdaInvoke(this, 'SubmitTranscodeJob', {
+      lambdaFunction: this.transcodeLambda,
+      payload: sfn.TaskInput.fromObject({
+        bucket: sfn.JsonPath.stringAt('$.bucket'),
+        key: sfn.JsonPath.stringAt('$.key'),
+      }),
+      resultPath: '$.transcode',
+    });
+
+    const videoComplete = new sfn.Pass(this, 'VideoProcessed', {
+      result: sfn.Result.fromObject({ status: 'VIDEO_TRANSCODING' }),
+    });
+    submitTranscode.next(videoComplete);
+
+    const isVideoFlagged = new sfn.Choice(this, 'IsVideoFlagged')
+      .when(sfn.Condition.isPresent('$.videoResults.ModerationLabels[0]'), deleteFlagged)
+      .otherwise(submitTranscode);
+
+    const checkJobStatus = new sfn.Choice(this, 'CheckVideoJobStatus')
+      .when(sfn.Condition.stringEquals('$.videoResults.JobStatus', 'IN_PROGRESS'), waitForModeration)
+      .when(sfn.Condition.stringEquals('$.videoResults.JobStatus', 'SUCCEEDED'), isVideoFlagged)
+      .otherwise(deleteFlagged);
+
+    const videoPath = startVideoModeration
+      .next(waitForModeration)
+      .next(getVideoResults)
+      .next(checkJobStatus);
+
+    // ── Entry: route by file type ────────────────────────
+    return new sfn.Choice(this, 'DetermineFileType')
+      .when(sfn.Condition.stringMatches('$.key', 'images/*'), imagePath)
+      .otherwise(videoPath);
   }
 }

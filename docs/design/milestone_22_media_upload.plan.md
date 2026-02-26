@@ -322,10 +322,13 @@ Mobile App                  API Server                  S3 / Step Functions Pipe
     │ ─────────────────────────────────────────────────────>│
     │                           │                           │
     │  200 OK                   │      EventBridge ──> Step Functions:
-    │ <─────────────────────────────────────────────────────│  1. Rekognition check
-    │                           │                           │  2. MediaConvert transcode
-    │                           │                           │  3. (Future) Update DB
-    │                           │                           │  4. (Future) Push notification
+    │ <─────────────────────────────────────────────────────│  1. Route by file type
+    │                           │                           │  2. Rekognition moderation
+    │                           │                           │     (sync images / async videos)
+    │                           │                           │  3. Images: S3 copy to media
+    │                           │                           │     Videos: MediaConvert transcode
+    │                           │                           │  4. (Future) Update DB
+    │                           │                           │  5. (Future) Push notification
     │                           │                           │
     │  (Later) WebSocket:       │                           │
     │  media:ready event        │                           │

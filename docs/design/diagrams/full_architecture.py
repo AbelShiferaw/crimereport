@@ -1,5 +1,5 @@
 from diagrams import Diagram, Cluster, Edge
-from diagrams.aws.network import ELB, CloudFront as CF
+from diagrams.aws.network import ELB, CloudFront as CF, VPC as VPCIcon, NATGateway, InternetGateway
 from diagrams.aws.compute import Fargate, Lambda
 from diagrams.aws.database import Aurora, ElastiCache
 from diagrams.aws.storage import S3
@@ -66,13 +66,17 @@ with Diagram(
         with Cluster("Edge Protection", graph_attr={"style": "rounded", "bgcolor": "#FFEBEE"}):
             waf = WAF("Web Application\nFirewall (WAF)")
 
-        with Cluster("Compute Layer", graph_attr={"style": "rounded", "bgcolor": "#E8F5E9"}):
-            alb = ELB("API Gateway\nALB")
-            fargate = Fargate("Report API\nService\n(ECS Fargate)\n0.25 vCPU / 0.5 GB")
+        with Cluster("VPC", graph_attr={"style": "rounded", "bgcolor": "#E8EAF6"}):
 
-        with Cluster("Data Layer", graph_attr={"style": "rounded", "bgcolor": "#F3E5F5"}):
-            aurora = Aurora("Crime Reports DB\n(Aurora Serverless v2\n+ PostGIS)")
-            redis = ElastiCache("Feed Cache +\nSocket Adapter\n(ElastiCache Redis)\ncache.t4g.micro")
+            with Cluster("Public Subnets", graph_attr={"style": "rounded", "bgcolor": "#C8E6C9"}):
+                igw = InternetGateway("Internet\nGateway")
+                alb = ELB("API Gateway\nALB")
+                nat = NATGateway("NAT\nGateway")
+
+            with Cluster("Private Subnets", graph_attr={"style": "rounded", "bgcolor": "#F3E5F5"}):
+                fargate = Fargate("Report API\nService\n(ECS Fargate)\n0.25 vCPU / 0.5 GB")
+                aurora = Aurora("Crime Reports DB\n(Aurora Serverless v2\n+ PostGIS)")
+                redis = ElastiCache("Feed Cache +\nSocket Adapter\n(ElastiCache Redis)\ncache.t4g.micro")
 
         with Cluster("Media Pipeline", graph_attr={"style": "rounded", "bgcolor": "#FBE9E7"}):
             s3_raw = S3("Evidence Upload\nS3 Bucket")
@@ -101,20 +105,23 @@ with Diagram(
     app >> Edge(label="Verify before\nsubmit", style="dashed", color="gray") >> recaptcha
     rest_client >> Edge(label="HTTP/REST\n/v1/*", color="darkgreen") >> waf
     ws_client >> Edge(label="WebSocket", color="purple") >> waf
-    waf >> Edge(label="Rate-limited\ntraffic", color="darkgreen") >> alb
+    waf >> Edge(label="Rate-limited\ntraffic", color="darkgreen") >> igw
+    igw >> alb
     alb >> fargate
 
     fargate >> Edge(label="SQL", color="blue") >> aurora
     fargate >> Edge(label="Cache +\nPub/Sub", color="red") >> redis
+    fargate >> Edge(label="Outbound\nvia NAT", style="dashed", color="gray") >> nat
 
-    app >> Edge(label="Upload", color="orange") >> s3_raw
+    app >> Edge(label="Upload\n(presigned URL)", color="orange") >> s3_raw
     s3_raw >> Edge(label="ObjectCreated", color="gray") >> eb
     eb >> Edge(label="Trigger", color="gray") >> sfn
     sfn >> Edge(label="On failure", color="crimson", style="dashed") >> dlq
-    sfn >> Edge(label="Step 1:\nModerate", color="gray") >> rekognition
-    rekognition >> Edge(label="Safe", color="green") >> lam
-    lam >> Edge(label="Step 2:\nCreate Job", color="gray") >> media_convert
+    sfn >> Edge(label="Image: sync\nVideo: async", color="gray") >> rekognition
+    rekognition >> Edge(label="Safe\nvideo only", color="green") >> lam
+    lam >> Edge(label="Submit Job", color="gray") >> media_convert
     media_convert >> Edge(label="MP4 + Thumb\n+ GIF", color="gray") >> s3_processed
+    rekognition >> Edge(label="Safe\nimage: copy", color="green", style="dashed") >> s3_processed
     s3_processed >> cloudfront
     cloudfront >> Edge(label="Stream\nMedia", color="darkcyan") >> app
 

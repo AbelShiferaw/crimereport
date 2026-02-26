@@ -20,17 +20,12 @@ describe('MediaStack', () => {
       BucketName: Match.stringLikeRegexp('crimereport-uploads-'),
       CorsConfiguration: {
         CorsRules: Match.arrayWith([
-          Match.objectLike({
-            AllowedMethods: ['PUT', 'POST'],
-          }),
+          Match.objectLike({ AllowedMethods: ['PUT', 'POST'] }),
         ]),
       },
       LifecycleConfiguration: {
         Rules: Match.arrayWith([
-          Match.objectLike({
-            ExpirationInDays: 1,
-            Status: 'Enabled',
-          }),
+          Match.objectLike({ ExpirationInDays: 1, Status: 'Enabled' }),
         ]),
       },
     });
@@ -127,13 +122,6 @@ describe('MediaStack', () => {
     });
   });
 
-  test('Lambda does NOT have a DLQ configured directly', () => {
-    template.hasResourceProperties('AWS::Lambda::Function', {
-      FunctionName: 'crimereport-transcode-trigger',
-      DeadLetterConfig: Match.absent(),
-    });
-  });
-
   // ── Step Functions State Machine ──────────────────────
 
   test('creates Step Functions state machine', () => {
@@ -144,12 +132,49 @@ describe('MediaStack', () => {
     });
   });
 
-  test('state machine role has Rekognition permissions', () => {
+  test('state machine role has image moderation permission', () => {
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: Match.objectLike({
         Statement: Match.arrayWith([
           Match.objectLike({
             Action: 'rekognition:detectModerationLabels',
+            Effect: 'Allow',
+          }),
+        ]),
+      }),
+    });
+  });
+
+  test('state machine role has video moderation permissions', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'rekognition:startContentModeration',
+            Effect: 'Allow',
+          }),
+        ]),
+      }),
+    });
+
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 'rekognition:getContentModeration',
+            Effect: 'Allow',
+          }),
+        ]),
+      }),
+    });
+  });
+
+  test('state machine role has S3 read access on uploads bucket', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(['s3:GetObject*', 's3:GetBucket*', 's3:List*']),
             Effect: 'Allow',
           }),
         ]),
@@ -170,22 +195,48 @@ describe('MediaStack', () => {
     });
   });
 
+  test('state machine role has S3 write access on media bucket', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(['s3:PutObject', 's3:Abort*']),
+            Effect: 'Allow',
+          }),
+        ]),
+      }),
+    });
+  });
+
+  test('state machine role has S3 copyObject permission', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: 's3:copyObject',
+            Effect: 'Allow',
+          }),
+        ]),
+      }),
+    });
+  });
+
   // ── EventBridge Rule ──────────────────────────────────
 
-  test('creates EventBridge rule for S3 uploads with videos/ prefix', () => {
+  test('creates EventBridge rule for S3 uploads with videos/ and images/ prefixes', () => {
     template.hasResourceProperties('AWS::Events::Rule', {
       Name: 'crimereport-upload-trigger',
       EventPattern: Match.objectLike({
         source: ['aws.s3'],
         'detail-type': ['Object Created'],
         detail: Match.objectLike({
-          object: { key: [{ prefix: 'videos/' }] },
+          object: { key: [{ prefix: 'videos/' }, { prefix: 'images/' }] },
         }),
       }),
     });
   });
 
-  test('EventBridge rule targets Step Functions state machine', () => {
+  test('EventBridge rule targets Step Functions with DLQ', () => {
     template.hasResourceProperties('AWS::Events::Rule', {
       Name: 'crimereport-upload-trigger',
       Targets: Match.arrayWith([

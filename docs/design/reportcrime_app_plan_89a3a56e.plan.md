@@ -292,7 +292,7 @@ The Snap Map aesthetic (circular thumbnails, stacked clusters) is significantly 
 
 **What it is:** Step Functions is AWS's workflow orchestration service. It defines a state machine that coordinates multiple AWS services in sequence, with branching, error handling, and retries built in.
 
-**How we're using it:** When a video/image is uploaded to S3, an EventBridge rule triggers a Step Functions state machine that: (1) calls **Rekognition** to check content safety - if flagged, deletes the file and stops, (2) invokes a **Lambda** that builds and submits a **MediaConvert** job to produce a 720p MP4, Thumbnail JPG, and 3-second GIF, (3) (future) waits for completion, updates the database, and sends a push notification.
+**How we're using it:** When a video/image is uploaded to S3, an EventBridge rule triggers a Step Functions state machine that routes by file type. For **images**: synchronous Rekognition moderation, then S3 copy to the media bucket if safe. For **videos**: asynchronous Rekognition moderation with polling, then a Lambda submits a MediaConvert job (720p MP4, Thumbnail JPG, 3-second GIF) if safe. Flagged content is deleted immediately. All task states have retry policies. (Future) updates the database with CDN URLs and sends push notifications.
 
 ### Media Processing: AWS MediaConvert
 
@@ -393,10 +393,10 @@ Note: `preview_gif_url` is a short animated loop for Snap Map thumbnails, genera
 | **Aurora Serverless v2** | Crime Reports DB | Primary database with geo queries | 0.5-1 ACU (auto-scales), PostGIS enabled |
 | **ElastiCache Redis** | Feed Cache + Socket Adapter | Feed caching, rate limiting, Socket.io pub/sub | cache.t4g.micro, single node |
 | **S3** | Evidence Upload + Processed Media Buckets | Media storage | 2 buckets (raw uploads, processed) |
-| **Step Functions** | Media Processing Pipeline | Orchestrates moderation + transcoding workflow | S3 event (via EventBridge) triggers state machine |
-| **Lambda** | MediaConvert Job Builder | Builds and submits MediaConvert job | Invoked by Step Functions, not directly by S3 |
-| **MediaConvert** | Evidence Transcoder | Video transcoding | On-demand, generates MP4 + thumbnails + GIF |
-| **Rekognition** | Content Moderation | Auto-detect unsafe/illegal content | DetectModerationLabels before transcoding (native Step Functions integration) |
+| **Step Functions** | Media Processing Pipeline | Orchestrates moderation + transcoding workflow | Routes images (sync) and videos (async) through Rekognition, then copy/transcode |
+| **Lambda** | MediaConvert Job Builder | Builds and submits MediaConvert job | Invoked by Step Functions for videos only |
+| **MediaConvert** | Evidence Transcoder | Video transcoding | On-demand, generates MP4 + thumbnails + GIF (videos only) |
+| **Rekognition** | Content Moderation | Auto-detect unsafe/illegal content | Sync DetectModerationLabels for images, async StartContentModeration for videos |
 | **SQS** | Failed Jobs Dead Letter Queue | Capture failed pipeline executions for retry/investigation | Standard queue |
 | **CloudFront** | Media Delivery CDN | CDN for videos/images | Global edge locations, video optimization |
 | **SNS** | Notification Dispatcher | Push notification fan-out | Standard topic, FCM integration |
@@ -424,40 +424,60 @@ User A connects to Task 1    User B connects to Task 2
 Phase 1 (Synchronous):
     App → POST /api/reports {type, description, location}
         → API creates report (status: 'processing'), returns reportId + presigned S3 URL
-    App → PUT presigned URL → Evidence Upload S3 Bucket
+    App → PUT presigned URL → Evidence Upload S3 Bucket (images/ or videos/ prefix)
 
 Phase 2 (Asynchronous - Step Functions Pipeline):
     Evidence Upload S3 Bucket
-                ↓ (EventBridge: s3:ObjectCreated)
+                ↓ (EventBridge: s3:ObjectCreated, prefix: images/ or videos/)
             Step Functions State Machine
                 ↓
-        ┌── Rekognition: DetectModerationLabels ──┐
-        │                                          │
-    (safe)                                    (flagged)
-        │                                          │
-        ↓                                          ↓
-    Lambda: Build & Submit                  Delete from S3 → END
-    MediaConvert Job
-        ↓
-    Evidence Transcoder (MediaConvert)
-        ↓ (outputs)
-    ┌───────────┼───────────┐
-    ↓           ↓           ↓
-720p MP4    Thumbnail    3s GIF
-    └───────────┼───────────┘
-        ↓
-    Processed Media S3 Bucket
-        ↓
-    Media Delivery CDN (CloudFront) → App
+        ┌── Determine File Type ──┐
+        │                         │
+    (images/*)              (videos/*)
+        │                         │
+        ↓                         ↓
+    Rekognition:             Rekognition:
+    DetectModerationLabels   StartContentModeration
+    (sync)                   (async)
+        │                         │
+        ↓                         ↓
+    ┌─ IsImageFlagged? ─┐   Wait 20s → GetContentModeration
+    │                    │        │
+ (safe)             (flagged)     ↓
+    │                    │   ┌─ Job done? ──────────┐
+    ↓                    │   │                      │
+ S3 Copy to          Delete  (IN_PROGRESS)    (SUCCEEDED)
+ Media Bucket        from S3  → loop back       │
+    ↓                    │    to Wait        ┌─ IsVideoFlagged? ─┐
+ IMAGE_READY         FLAGGED                │                    │
+                                         (safe)             (flagged)
+                                            │                    │
+                                            ↓                    ↓
+                                        Lambda: Build &     Delete from S3
+                                        Submit MediaConvert     ↓
+                                        Job                  FLAGGED
+                                            ↓
+                                        MediaConvert
+                                            ↓ (outputs)
+                                        ┌───┼───┐
+                                        ↓   ↓   ↓
+                                    720p  Thumb  3s GIF
+                                        └───┼───┘
+                                            ↓
+                                    Processed Media S3 Bucket
+                                            ↓
+                                    CloudFront CDN → App
 
-    (Future steps: update database with CDN URLs, send push notification)
+    (Future: update DB with CDN URLs, send push notification)
 ```
 
 Notes:
-- EventBridge triggers the Step Functions state machine when objects are created in the uploads bucket.
-- Rekognition checks content safety BEFORE transcoding. Flagged content is deleted immediately and never processed.
-- A small Lambda remains for MediaConvert job submission (endpoint discovery + job configuration).
-- Step Functions handles retries and error routing to the SQS dead letter queue.
+- EventBridge triggers the Step Functions state machine when objects are created in the uploads bucket with `images/` or `videos/` prefix.
+- **Images** use synchronous `DetectModerationLabels`. Safe images are copied directly to the media bucket (no transcoding needed).
+- **Videos** use asynchronous `StartContentModeration` with a polling loop (`Wait` → `GetContentModeration` → check status). Safe videos are sent to Lambda for MediaConvert transcoding.
+- Flagged content (image or video) is deleted from the uploads bucket immediately and never reaches the media bucket.
+- All Rekognition and S3 task states have retry policies (exponential backoff) for transient failures.
+- Step Functions handles errors and routes failures to the SQS dead letter queue.
 
 ### Estimated Monthly Cost
 
@@ -663,18 +683,25 @@ flowchart TB
 - Community flagging - reports hidden after X flags
 - Optional: ML-based content moderation for media
 
-### Media Processing Pipeline (Step Functions + MediaConvert)
+### Media Processing Pipeline (Step Functions + Rekognition + MediaConvert)
 
 - Upload to S3 triggers EventBridge, which starts a Step Functions state machine
-- Step 1: Rekognition checks content safety (native integration, no Lambda needed)
-- Step 2: If flagged, file is deleted from S3 and pipeline stops
-- Step 3: If safe, a Lambda builds and submits a MediaConvert job with outputs:
-  - **720p MP4** - Main video for feed playback
-  - **Thumbnail JPG** - First frame for loading states
-  - **3-second GIF** - Animated preview for map markers
-- MediaConvert strips metadata automatically
-- Processed files stored in S3 output bucket
-- CloudFront CDN serves media globally with low latency
+- Step Functions routes by file type (`images/*` vs `videos/*`)
+- **Image path** (sync):
+  1. Rekognition `DetectModerationLabels` checks content safety synchronously
+  2. If flagged → delete from S3 and stop
+  3. If safe → S3 copy to processed media bucket (no transcoding needed)
+- **Video path** (async):
+  1. Rekognition `StartContentModeration` begins async analysis
+  2. Polling loop: `Wait 20s` → `GetContentModeration` → check `JobStatus`
+  3. If flagged → delete from S3 and stop
+  4. If safe → Lambda builds and submits a MediaConvert job with outputs:
+     - **720p MP4** - Main video for feed playback
+     - **Thumbnail JPG** - First frame for loading states
+     - **3-second GIF** - Animated preview for map markers
+- All task states have retry policies with exponential backoff
+- Flagged content never reaches the processed media bucket
+- Processed files stored in S3 output bucket, served via CloudFront CDN
 - (Future) Step Functions updates database with CDN URLs and sends push notification
 
 ---
