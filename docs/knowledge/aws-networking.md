@@ -4,6 +4,24 @@ Personal reference notes for understanding the AWS networking layer in the Crime
 
 ---
 
+## Visual Overviews
+
+### VPC Network Topology
+![VPC Topology](diagrams/vpc_topology.png)
+
+### Security Group Trust Chain
+![Security Groups](diagrams/security_groups.png)
+
+### API Request Flow (through VPC)
+![API Request Flow](diagrams/request_flow_api.png)
+
+### Media Upload Flow (bypasses VPC)
+![Media Upload Flow](diagrams/request_flow_media.png)
+
+*Diagram sources are in [diagrams/](diagrams/) -- regenerate with `python3 <script>.py`*
+
+---
+
 ## VPC (Virtual Private Cloud)
 
 A VPC is your own isolated section of AWS's cloud. Think of it as your private data center inside AWS. Nothing gets in or out unless you explicitly allow it.

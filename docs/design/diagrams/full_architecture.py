@@ -66,17 +66,21 @@ with Diagram(
         with Cluster("Edge Protection", graph_attr={"style": "rounded", "bgcolor": "#FFEBEE"}):
             waf = WAF("Web Application\nFirewall (WAF)")
 
-        with Cluster("VPC", graph_attr={"style": "rounded", "bgcolor": "#E8EAF6"}):
+        with Cluster("VPC: 10.0.0.0/16", graph_attr={"style": "rounded", "bgcolor": "#E8EAF6"}):
 
-            with Cluster("Public Subnets", graph_attr={"style": "rounded", "bgcolor": "#C8E6C9"}):
+            with Cluster("Public Subnets (10.0.0.0/24, 10.0.1.0/24)", graph_attr={"style": "rounded", "bgcolor": "#C8E6C9"}):
                 igw = InternetGateway("Internet\nGateway")
-                alb = ELB("API Gateway\nALB")
+                with Cluster("crimereport-alb-sg\n(80/443 from internet)", graph_attr={"style": "dashed", "bgcolor": "#A5D6A7", "pencolor": "#2E7D32"}):
+                    alb = ELB("API Gateway\nALB")
                 nat = NATGateway("NAT\nGateway")
 
-            with Cluster("Private Subnets", graph_attr={"style": "rounded", "bgcolor": "#F3E5F5"}):
-                fargate = Fargate("Report API\nService\n(ECS Fargate)\n0.25 vCPU / 0.5 GB")
-                aurora = Aurora("Crime Reports DB\n(Aurora Serverless v2\n+ PostGIS)")
-                redis = ElastiCache("Feed Cache +\nSocket Adapter\n(ElastiCache Redis)\ncache.t4g.micro")
+            with Cluster("Private Subnets (10.0.2.0/24, 10.0.3.0/24)", graph_attr={"style": "rounded", "bgcolor": "#F3E5F5"}):
+                with Cluster("crimereport-ecs-sg\n(3000 from ALB SG only)", graph_attr={"style": "dashed", "bgcolor": "#CE93D8", "pencolor": "#6A1B9A"}):
+                    fargate = Fargate("Report API\nService\n(ECS Fargate)\n0.25 vCPU / 0.5 GB")
+                with Cluster("crimereport-db-sg\n(5432 from ECS SG only)", graph_attr={"style": "dashed", "bgcolor": "#CE93D8", "pencolor": "#6A1B9A"}):
+                    aurora = Aurora("Crime Reports DB\n(Aurora Serverless v2\n+ PostGIS)")
+                with Cluster("crimereport-redis-sg\n(6379 from ECS SG only)", graph_attr={"style": "dashed", "bgcolor": "#CE93D8", "pencolor": "#6A1B9A"}):
+                    redis = ElastiCache("Feed Cache +\nSocket Adapter\n(ElastiCache Redis)\ncache.t4g.micro")
 
         with Cluster("Media Pipeline", graph_attr={"style": "rounded", "bgcolor": "#FBE9E7"}):
             s3_raw = S3("Evidence Upload\nS3 Bucket")
