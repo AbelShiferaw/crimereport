@@ -1,6 +1,8 @@
+import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
+import * as ecrAssets from 'aws-cdk-lib/aws-ecr-assets';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -30,6 +32,7 @@ export interface ComputeStackProps extends cdk.StackProps {
   redisEndpoint: string;
   redisPort: string;
   wafAclArn: string;
+  dockerDir: string;
 }
 
 export class ComputeStack extends cdk.Stack {
@@ -52,6 +55,7 @@ export class ComputeStack extends cdk.Stack {
       redisEndpoint,
       redisPort,
       wafAclArn,
+      dockerDir,
     } = props;
 
     // ── ECR Repository ──────────────────────────────────────
@@ -113,9 +117,13 @@ export class ComputeStack extends cdk.Stack {
       taskRole,
     });
 
+    const imageAsset = new ecrAssets.DockerImageAsset(this, 'ApiImage', {
+      directory: dockerDir,
+      platform: ecrAssets.Platform.LINUX_AMD64,
+    });
+
     const container = taskDef.addContainer('api', {
-      image: ecs.ContainerImage.fromRegistry('node:20-alpine'),
-      command: ['node', '-e', `require("http").createServer((req,res)=>{res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify({status:"ok"}))}).listen(${API_PORT})`],
+      image: ecs.ContainerImage.fromDockerImageAsset(imageAsset),
       logging: ecs.LogDrivers.awsLogs({
         logGroup,
         streamPrefix: 'api',
@@ -130,7 +138,7 @@ export class ComputeStack extends cdk.Stack {
         DATABASE_URL: ecs.Secret.fromSecretsManager(dbSecret),
       },
       healthCheck: {
-        command: ['CMD-SHELL', `wget -q -O /dev/null http://localhost:${API_PORT}/health || exit 1`],
+        command: ['CMD-SHELL', `curl -f http://localhost:${API_PORT}/health || exit 1`],
         interval: cdk.Duration.seconds(30),
         timeout: cdk.Duration.seconds(5),
         retries: 3,

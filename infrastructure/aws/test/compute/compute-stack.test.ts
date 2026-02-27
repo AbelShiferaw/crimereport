@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -34,6 +35,7 @@ describe('ComputeStack', () => {
       redisEndpoint: 'redis.test.cache.amazonaws.com',
       redisPort: '6379',
       wafAclArn: 'arn:aws:wafv2:us-east-1:123456789012:regional/webacl/test/abc123',
+      dockerDir: path.join(__dirname, '..', '..', '..', '..', 'backend', 'api'),
     });
 
     template = Template.fromStack(stack);
@@ -135,7 +137,7 @@ describe('ComputeStack', () => {
       ContainerDefinitions: Match.arrayWith([
         Match.objectLike({
           HealthCheck: Match.objectLike({
-            Command: ['CMD-SHELL', 'wget -q -O /dev/null http://localhost:3000/health || exit 1'],
+            Command: ['CMD-SHELL', 'curl -f http://localhost:3000/health || exit 1'],
           }),
         }),
       ]),

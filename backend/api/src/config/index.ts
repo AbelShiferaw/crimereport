@@ -1,0 +1,39 @@
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+function env(key: string, fallback?: string): string {
+  const value = process.env[key] ?? fallback;
+  if (value === undefined) {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
+  return value;
+}
+
+function envInt(key: string, fallback?: number): number {
+  const raw = process.env[key];
+  if (raw !== undefined) return parseInt(raw, 10);
+  if (fallback !== undefined) return fallback;
+  throw new Error(`Missing required environment variable: ${key}`);
+}
+
+export const config = {
+  nodeEnv: env('NODE_ENV', 'development'),
+  port: envInt('PORT', 3000),
+
+  database: {
+    url: env('DATABASE_URL', ''),
+  },
+
+  redis: {
+    host: env('REDIS_HOST', 'localhost'),
+    port: envInt('REDIS_PORT', 6379),
+  },
+
+  get isDev() {
+    return this.nodeEnv === 'development';
+  },
+  get isProd() {
+    return this.nodeEnv === 'production';
+  },
+} as const;

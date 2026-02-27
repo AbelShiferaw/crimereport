@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
+import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import { NetworkStack } from '../lib/network/network-stack';
 import { WafStack } from '../lib/network/waf-stack';
@@ -78,6 +79,7 @@ const computeStack = new ComputeStack(app, 'CrimeReport-Compute', {
   redisEndpoint: cacheStack.redisEndpoint,
   redisPort: cacheStack.redisPort,
   wafAclArn: wafStack.webAclArn,
+  dockerDir: path.join(__dirname, '..', '..', '..', 'backend', 'api'),
 });
 computeStack.addDependency(networkStack);
 computeStack.addDependency(securityStack);
