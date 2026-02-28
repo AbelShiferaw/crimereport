@@ -24,6 +24,9 @@ export const config = {
 
   database: {
     url: env('DATABASE_URL', ''),
+    poolMax: envInt('DB_POOL_MAX', 20),
+    idleTimeoutMs: envInt('DB_IDLE_TIMEOUT_MS', 30_000),
+    connectionTimeoutMs: envInt('DB_CONNECTION_TIMEOUT_MS', 5_000),
   },
 
   redis: {

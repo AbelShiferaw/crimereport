@@ -2,6 +2,8 @@ import { createServer } from 'http';
 import { Server as SocketServer } from 'socket.io';
 import app from './app';
 import { config } from './config';
+import { pool } from './lib/db';
+import { disconnect as disconnectRedis } from './lib/redis';
 import { logger } from './lib/logger';
 
 const httpServer = createServer(app);
@@ -25,10 +27,14 @@ httpServer.listen(config.port, () => {
 function shutdown(signal: string) {
   logger.info({ signal }, 'shutdown signal received');
 
-  httpServer.close(() => {
+  httpServer.close(async () => {
     logger.info('http server closed');
-    io.close(() => {
+    io.close(async () => {
       logger.info('socket.io closed');
+      await pool.end().catch((err) => logger.error({ err }, 'error closing pg pool'));
+      logger.info('pg pool closed');
+      await disconnectRedis().catch((err) => logger.error({ err }, 'error closing redis'));
+      logger.info('redis closed');
       process.exit(0);
     });
   });
