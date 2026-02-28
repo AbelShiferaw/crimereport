@@ -1,5 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 import { VPC_CIDR, MAX_AZS, NAT_GATEWAYS, PROJECT_PREFIX } from '../config/constants';
 
@@ -27,6 +28,17 @@ export class NetworkStack extends cdk.Stack {
           cidrMask: 24,
         },
       ],
+    });
+
+    const flowLogGroup = new logs.LogGroup(this, 'VpcFlowLogs', {
+      logGroupName: `/vpc/${PROJECT_PREFIX}-flow-logs`,
+      retention: logs.RetentionDays.ONE_MONTH,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    this.vpc.addFlowLog('FlowLog', {
+      destination: ec2.FlowLogDestination.toCloudWatchLogs(flowLogGroup),
+      trafficType: ec2.FlowLogTrafficType.ALL,
     });
 
     new cdk.CfnOutput(this, 'VpcId', {

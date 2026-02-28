@@ -69,4 +69,31 @@ describe('WafStack', () => {
       ]),
     });
   });
+
+  test('has AWSManagedRulesSQLiRuleSet attached', () => {
+    template.hasResourceProperties('AWS::WAFv2::WebACL', {
+      Rules: Match.arrayWith([
+        Match.objectLike({
+          Name: 'AWSManagedRulesSQLiRuleSet',
+          Statement: {
+            ManagedRuleGroupStatement: {
+              VendorName: 'AWS',
+              Name: 'AWSManagedRulesSQLiRuleSet',
+            },
+          },
+        }),
+      ]),
+    });
+  });
+
+  test('has WAF logging configured to CloudWatch', () => {
+    template.resourceCountIs('AWS::WAFv2::LoggingConfiguration', 1);
+  });
+
+  test('creates WAF log group with correct naming prefix', () => {
+    template.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: 'aws-waf-logs-crimereport',
+      RetentionInDays: 30,
+    });
+  });
 });

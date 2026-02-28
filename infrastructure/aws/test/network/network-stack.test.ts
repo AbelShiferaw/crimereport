@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Template, Match } from 'aws-cdk-lib/assertions';
 import { NetworkStack } from '../../lib/network/network-stack';
 import { VPC_CIDR } from '../../lib/config/constants';
 
@@ -47,5 +47,19 @@ describe('NetworkStack', () => {
   test('creates and attaches Internet Gateway', () => {
     template.resourceCountIs('AWS::EC2::InternetGateway', 1);
     template.resourceCountIs('AWS::EC2::VPCGatewayAttachment', 1);
+  });
+
+  test('creates VPC Flow Logs to CloudWatch', () => {
+    template.hasResourceProperties('AWS::EC2::FlowLog', {
+      TrafficType: 'ALL',
+      ResourceType: 'VPC',
+    });
+  });
+
+  test('creates flow log CloudWatch log group', () => {
+    template.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: '/vpc/crimereport-flow-logs',
+      RetentionInDays: 30,
+    });
   });
 });
