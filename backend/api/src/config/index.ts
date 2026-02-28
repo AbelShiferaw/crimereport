@@ -20,6 +20,7 @@ function envInt(key: string, fallback?: number): number {
 export const config = {
   nodeEnv: env('NODE_ENV', 'development'),
   port: envInt('PORT', 3000),
+  corsOrigin: env('CORS_ORIGIN', '*'),
 
   database: {
     url: env('DATABASE_URL', ''),

@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -12,7 +13,7 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
-import { PROJECT_PREFIX } from '../config/constants';
+import { PROJECT_PREFIX, MODERATION_CONFIDENCE_THRESHOLD, MAX_UPLOAD_SIZE_BYTES } from '../config/constants';
 
 const REKOGNITION_RETRY: sfn.RetryProps = {
   errors: ['Rekognition.ThrottlingException', 'Rekognition.InternalServerError', 'States.TaskFailed'],
@@ -68,6 +69,17 @@ export class MediaStack extends cdk.Stack {
       ],
     });
 
+    this.uploadsBucket.addToResourcePolicy(new iam.PolicyStatement({
+      sid: 'DenyOversizedUploads',
+      effect: iam.Effect.DENY,
+      principals: [new iam.AnyPrincipal()],
+      actions: ['s3:PutObject'],
+      resources: [this.uploadsBucket.arnForObjects('*')],
+      conditions: {
+        NumericGreaterThan: { 's3:content-length-range': MAX_UPLOAD_SIZE_BYTES },
+      },
+    }));
+
     this.mediaBucket = new s3.Bucket(this, 'MediaBucket', {
       bucketName: `${PROJECT_PREFIX}-media-${this.account}`,
       encryption: s3.BucketEncryption.S3_MANAGED,
@@ -101,6 +113,18 @@ export class MediaStack extends cdk.Stack {
       queueName: `${PROJECT_PREFIX}-media-dlq`,
       retentionPeriod: cdk.Duration.days(14),
       encryption: sqs.QueueEncryption.SQS_MANAGED,
+    });
+
+    new cloudwatch.Alarm(this, 'DlqAlarm', {
+      alarmName: `${PROJECT_PREFIX}-media-dlq-alarm`,
+      alarmDescription: 'Alert when media pipeline failures land in the DLQ',
+      metric: this.deadLetterQueue.metricApproximateNumberOfMessagesVisible({
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
     // ── MediaConvert Role ───────────────────────────────────
@@ -280,7 +304,10 @@ export class MediaStack extends cdk.Stack {
     copyToMedia.next(imageComplete);
 
     const isImageFlagged = new sfn.Choice(this, 'IsImageFlagged')
-      .when(sfn.Condition.isPresent('$.moderation.ModerationLabels[0]'), deleteFlagged)
+      .when(sfn.Condition.and(
+        sfn.Condition.isPresent('$.moderation.ModerationLabels[0]'),
+        sfn.Condition.numberGreaterThanEquals('$.moderation.ModerationLabels[0].Confidence', MODERATION_CONFIDENCE_THRESHOLD),
+      ), deleteFlagged)
       .otherwise(copyToMedia);
 
     const imagePath = detectImageLabels.next(isImageFlagged);
@@ -330,7 +357,10 @@ export class MediaStack extends cdk.Stack {
     submitTranscode.next(videoComplete);
 
     const isVideoFlagged = new sfn.Choice(this, 'IsVideoFlagged')
-      .when(sfn.Condition.isPresent('$.videoResults.ModerationLabels[0]'), deleteFlagged)
+      .when(sfn.Condition.and(
+        sfn.Condition.isPresent('$.videoResults.ModerationLabels[0]'),
+        sfn.Condition.numberGreaterThanEquals('$.videoResults.ModerationLabels[0].Confidence', MODERATION_CONFIDENCE_THRESHOLD),
+      ), deleteFlagged)
       .otherwise(submitTranscode);
 
     const checkJobStatus = new sfn.Choice(this, 'CheckVideoJobStatus')

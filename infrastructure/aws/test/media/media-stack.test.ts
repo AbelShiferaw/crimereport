@@ -62,12 +62,40 @@ describe('MediaStack', () => {
     });
   });
 
+  // ── Upload Size Limit ──────────────────────────────────
+
+  test('uploads bucket denies oversized objects', () => {
+    template.hasResourceProperties('AWS::S3::BucketPolicy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Effect: 'Deny',
+            Action: 's3:PutObject',
+            Condition: Match.objectLike({
+              NumericGreaterThan: { 's3:content-length-range': 104857600 },
+            }),
+          }),
+        ]),
+      }),
+    });
+  });
+
   // ── SQS DLQ ─────────────────────────────────────────────
 
   test('creates dead letter queue with 14-day retention', () => {
     template.hasResourceProperties('AWS::SQS::Queue', {
       QueueName: 'crimereport-media-dlq',
       MessageRetentionPeriod: 1209600,
+    });
+  });
+
+  test('creates DLQ alarm for pipeline failures', () => {
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      AlarmName: 'crimereport-media-dlq-alarm',
+      Threshold: 1,
+      EvaluationPeriods: 1,
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold',
+      TreatMissingData: 'notBreaching',
     });
   });
 

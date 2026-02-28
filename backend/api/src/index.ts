@@ -7,7 +7,7 @@ import { logger } from './lib/logger';
 const httpServer = createServer(app);
 
 const io = new SocketServer(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: config.corsOrigin, methods: ['GET', 'POST'] },
 });
 
 io.on('connection', (socket) => {

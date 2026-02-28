@@ -909,6 +909,12 @@ Development is broken into reviewable milestones. After each milestone, review t
 | 23 | WebSocket Server | WebSocket connects, receives test broadcasts |
 | 24 | Push Notifications | Push notifications received on device |
 
+### Phase C½: CI/CD Pipeline
+
+| # | Milestone | Deliverable |
+|---|-----------|-------------|
+| 24½ | CI/CD Pipeline | GitHub Actions workflows for automated build, test, Docker push to ECR, and ECS deploy on merge to main. CDK diff on PRs. |
+
 ### Phase D: Integration
 
 | # | Milestone | Deliverable |
@@ -1103,6 +1109,20 @@ Development is broken into reviewable milestones. After each milestone, review t
 - FCM integration
 - Device token registration
 - Geo-filtered push sending
+
+</details>
+
+<details>
+
+<summary><strong>Phase C½: CI/CD Pipeline (Click to expand)</strong></summary>
+
+**Milestone 24½: CI/CD Pipeline**
+
+- GitHub Actions workflow: on push to `main`, build Docker image, push to ECR, deploy to Fargate
+- GitHub Actions workflow: on PR, run `cdk diff` and post changeset as PR comment
+- Run unit tests (Jest for CDK + API) before deploy
+- CDK synth validation on PRs
+- AWS credentials via OIDC (no long-lived keys)
 
 </details>
 

@@ -1,7 +1,10 @@
 import 'express-async-errors';
 import express from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
+import { config } from './config';
+import { requestId } from './middleware/request-id';
 import { requestLogger } from './middleware/request-logger';
 import { notFoundHandler } from './middleware/not-found';
 import { errorHandler } from './middleware/error-handler';
@@ -10,9 +13,11 @@ import apiRouter from './routes';
 
 const app = express();
 
+app.use(requestId);
 app.use(helmet());
-app.use(cors());
-app.use(express.json());
+app.use(compression());
+app.use(cors({ origin: config.corsOrigin }));
+app.use(express.json({ limit: '1mb' }));
 app.use(requestLogger);
 
 app.use(healthRouter);

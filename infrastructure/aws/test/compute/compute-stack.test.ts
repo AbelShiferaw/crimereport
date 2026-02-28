@@ -226,6 +226,17 @@ describe('ComputeStack', () => {
     });
   });
 
+  test('Fargate service has deployment circuit breaker with rollback', () => {
+    template.hasResourceProperties('AWS::ECS::Service', {
+      DeploymentConfiguration: Match.objectLike({
+        DeploymentCircuitBreaker: {
+          Enable: true,
+          Rollback: true,
+        },
+      }),
+    });
+  });
+
   test('Fargate service does not assign public IP', () => {
     template.hasResourceProperties('AWS::ECS::Service', {
       NetworkConfiguration: Match.objectLike({

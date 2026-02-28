@@ -196,6 +196,7 @@ export class ComputeStack extends cdk.Stack {
       assignPublicIp: false,
       minHealthyPercent: 50,
       maxHealthyPercent: 200,
+      circuitBreaker: { enable: true, rollback: true },
     });
 
     this.service.attachToApplicationTargetGroup(targetGroup);
