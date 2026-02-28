@@ -10,7 +10,8 @@ import { DatabaseStack } from '../lib/data/database-stack';
 import { CacheStack } from '../lib/data/cache-stack';
 import { MediaStack } from '../lib/media/media-stack';
 import { ComputeStack } from '../lib/compute/compute-stack';
-import { DEFAULT_TAGS } from '../lib/config/constants';
+import { MonitoringStack } from '../lib/monitoring/monitoring-stack';
+import { DEFAULT_TAGS, PROJECT_PREFIX } from '../lib/config/constants';
 
 const app = new cdk.App();
 
@@ -87,3 +88,16 @@ computeStack.addDependency(iamStack);
 computeStack.addDependency(databaseStack);
 computeStack.addDependency(cacheStack);
 computeStack.addDependency(wafStack);
+
+const monitoringStack = new MonitoringStack(app, 'CrimeReport-Monitoring', {
+  env,
+  description: 'CrimeReport - CloudWatch alarms and operations dashboard',
+  dbCluster: databaseStack.cluster,
+  redisReplicationGroupId: `${PROJECT_PREFIX}-redis`,
+  ecsCluster: computeStack.cluster,
+  ecsService: computeStack.service,
+  alb: computeStack.alb,
+});
+monitoringStack.addDependency(databaseStack);
+monitoringStack.addDependency(cacheStack);
+monitoringStack.addDependency(computeStack);
