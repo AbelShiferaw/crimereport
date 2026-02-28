@@ -4,7 +4,17 @@ import { checkHealth as checkRedis } from '../lib/redis';
 
 const router = Router();
 
-router.get('/health', async (_req, res) => {
+// Liveness: is the process running? Used by container health check and ALB.
+router.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
+
+// Readiness: can the service handle requests? Checks DB + Redis connectivity.
+router.get('/health/ready', async (_req, res) => {
   const [db, redis] = await Promise.all([checkDb(), checkRedis()]);
 
   const allHealthy = db && redis;
