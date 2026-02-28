@@ -33,9 +33,13 @@ export async function getClient(): Promise<RedisClientType> {
 
 export async function checkHealth(): Promise<boolean> {
   try {
-    const c = await getClient();
-    const pong = await c.ping();
-    return pong === 'PONG';
+    const result = await Promise.race([
+      getClient().then((c) => c.ping()),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('redis health check timeout')), 3_000),
+      ),
+    ]);
+    return result === 'PONG';
   } catch {
     return false;
   }

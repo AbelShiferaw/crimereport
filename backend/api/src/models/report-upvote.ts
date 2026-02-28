@@ -1,9 +1,10 @@
-import { getClient } from '../lib/db';
+import { getClient, query } from '../lib/db';
 import { ReportUpvote } from './types';
 
 /**
  * Toggles an upvote: adds it if it doesn't exist, removes it if it does.
- * Uses a transaction to keep the report.upvotes counter in sync.
+ * Uses a transaction with FOR UPDATE to prevent race conditions and keep
+ * the report.upvotes counter in sync.
  * Returns true if the upvote was added, false if it was removed.
  */
 export async function toggle(reportId: string, deviceId: string): Promise<boolean> {
@@ -11,8 +12,11 @@ export async function toggle(reportId: string, deviceId: string): Promise<boolea
   try {
     await client.query('BEGIN');
 
+    // Lock the report row to prevent concurrent upvote races
+    await client.query('SELECT id FROM reports WHERE id = $1 FOR UPDATE', [reportId]);
+
     const { rows } = await client.query<ReportUpvote>(
-      'SELECT report_id FROM report_upvotes WHERE report_id = $1 AND device_id = $2',
+      'SELECT report_id FROM report_upvotes WHERE report_id = $1 AND device_id = $2 FOR UPDATE',
       [reportId, deviceId],
     );
 
@@ -48,14 +52,9 @@ export async function toggle(reportId: string, deviceId: string): Promise<boolea
 }
 
 export async function existsForDevice(reportId: string, deviceId: string): Promise<boolean> {
-  const client = await getClient();
-  try {
-    const { rows } = await client.query(
-      'SELECT 1 FROM report_upvotes WHERE report_id = $1 AND device_id = $2',
-      [reportId, deviceId],
-    );
-    return rows.length > 0;
-  } finally {
-    client.release();
-  }
+  const { rows } = await query(
+    'SELECT 1 FROM report_upvotes WHERE report_id = $1 AND device_id = $2',
+    [reportId, deviceId],
+  );
+  return rows.length > 0;
 }

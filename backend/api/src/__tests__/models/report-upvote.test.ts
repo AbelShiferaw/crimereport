@@ -4,6 +4,7 @@ import * as db from '../../lib/db';
 jest.mock('../../lib/db');
 
 const mockGetClient = db.getClient as jest.MockedFunction<typeof db.getClient>;
+const mockQuery = db.query as jest.MockedFunction<typeof db.query>;
 
 function createMockClient() {
   const mockClient = {
@@ -25,7 +26,8 @@ describe('report-upvote model', () => {
 
       client.query
         .mockResolvedValueOnce(undefined) // BEGIN
-        .mockResolvedValueOnce({ rows: [] }) // SELECT (not found)
+        .mockResolvedValueOnce({ rows: [{ id: 'r1' }] }) // SELECT FOR UPDATE (lock report)
+        .mockResolvedValueOnce({ rows: [] }) // SELECT FOR UPDATE (upvote not found)
         .mockResolvedValueOnce(undefined) // INSERT
         .mockResolvedValueOnce(undefined) // UPDATE upvotes +1
         .mockResolvedValueOnce(undefined); // COMMIT
@@ -34,6 +36,10 @@ describe('report-upvote model', () => {
 
       expect(result).toBe(true);
       expect(client.query).toHaveBeenCalledWith('BEGIN');
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('FOR UPDATE'),
+        ['r1'],
+      );
       expect(client.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO report_upvotes'),
         ['r1', 'd1'],
@@ -48,7 +54,8 @@ describe('report-upvote model', () => {
 
       client.query
         .mockResolvedValueOnce(undefined) // BEGIN
-        .mockResolvedValueOnce({ rows: [{ report_id: 'r1' }] }) // SELECT (found)
+        .mockResolvedValueOnce({ rows: [{ id: 'r1' }] }) // SELECT FOR UPDATE (lock report)
+        .mockResolvedValueOnce({ rows: [{ report_id: 'r1' }] }) // SELECT FOR UPDATE (found)
         .mockResolvedValueOnce(undefined) // DELETE
         .mockResolvedValueOnce(undefined) // UPDATE upvotes -1
         .mockResolvedValueOnce(undefined); // COMMIT
@@ -70,7 +77,7 @@ describe('report-upvote model', () => {
 
       client.query
         .mockResolvedValueOnce(undefined) // BEGIN
-        .mockRejectedValueOnce(new Error('db error')); // SELECT fails
+        .mockRejectedValueOnce(new Error('db error')); // SELECT FOR UPDATE fails
 
       await expect(upvoteModel.toggle('r1', 'd1')).rejects.toThrow('db error');
       expect(client.query).toHaveBeenCalledWith('ROLLBACK');
@@ -80,25 +87,23 @@ describe('report-upvote model', () => {
 
   describe('existsForDevice', () => {
     it('returns true when upvote exists', async () => {
-      const client = createMockClient();
-      mockGetClient.mockResolvedValueOnce(client as any);
-      client.query.mockResolvedValueOnce({ rows: [{ '?column?': 1 }] });
+      mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }], rowCount: 1 } as any);
 
       const result = await upvoteModel.existsForDevice('r1', 'd1');
 
       expect(result).toBe(true);
-      expect(client.release).toHaveBeenCalled();
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('FROM report_upvotes'),
+        ['r1', 'd1'],
+      );
     });
 
     it('returns false when upvote does not exist', async () => {
-      const client = createMockClient();
-      mockGetClient.mockResolvedValueOnce(client as any);
-      client.query.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
 
       const result = await upvoteModel.existsForDevice('r1', 'd1');
 
       expect(result).toBe(false);
-      expect(client.release).toHaveBeenCalled();
     });
   });
 });
