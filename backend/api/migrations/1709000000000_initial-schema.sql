@@ -1,13 +1,9 @@
--- 001_initial_schema.sql
--- CrimeReport initial database schema with PostGIS support
+-- Up Migration
 
 CREATE EXTENSION IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- ============================================================
 -- Reports
--- ============================================================
-
 CREATE TABLE reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     device_id VARCHAR(64) NOT NULL,
@@ -28,10 +24,7 @@ CREATE INDEX idx_reports_device_id ON reports(device_id);
 CREATE INDEX idx_reports_type ON reports(type);
 CREATE INDEX idx_reports_status ON reports(status);
 
--- ============================================================
--- Media (photos / videos attached to reports)
--- ============================================================
-
+-- Media
 CREATE TABLE media (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     report_id UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
@@ -46,10 +39,7 @@ CREATE TABLE media (
 
 CREATE INDEX idx_media_report_id ON media(report_id);
 
--- ============================================================
 -- Comments
--- ============================================================
-
 CREATE TABLE comments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     report_id UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
@@ -62,10 +52,7 @@ CREATE TABLE comments (
 CREATE INDEX idx_comments_report_id ON comments(report_id);
 CREATE INDEX idx_comments_created_at ON comments(created_at DESC);
 
--- ============================================================
--- Upvote tracking (composite PK prevents duplicate votes)
--- ============================================================
-
+-- Upvote tracking
 CREATE TABLE report_upvotes (
     report_id UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
     device_id VARCHAR(64) NOT NULL,
@@ -73,10 +60,7 @@ CREATE TABLE report_upvotes (
     PRIMARY KEY (report_id, device_id)
 );
 
--- ============================================================
--- Device activity (rate limiting & abuse prevention)
--- ============================================================
-
+-- Device activity
 CREATE TABLE device_activity (
     device_id VARCHAR(64) PRIMARY KEY,
     report_count_today INTEGER NOT NULL DEFAULT 0,
@@ -85,10 +69,7 @@ CREATE TABLE device_activity (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ============================================================
 -- Trigger: auto-update updated_at on reports
--- ============================================================
-
 CREATE OR REPLACE FUNCTION update_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -101,3 +82,15 @@ CREATE TRIGGER trg_reports_updated_at
     BEFORE UPDATE ON reports
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
+
+-- Down Migration
+
+DROP TRIGGER IF EXISTS trg_reports_updated_at ON reports;
+DROP FUNCTION IF EXISTS update_updated_at();
+DROP TABLE IF EXISTS device_activity;
+DROP TABLE IF EXISTS report_upvotes;
+DROP TABLE IF EXISTS comments;
+DROP TABLE IF EXISTS media;
+DROP TABLE IF EXISTS reports;
+DROP EXTENSION IF EXISTS "uuid-ossp";
+DROP EXTENSION IF EXISTS postgis;
