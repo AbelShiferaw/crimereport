@@ -13,7 +13,7 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as tasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
-import { PROJECT_PREFIX, MODERATION_CONFIDENCE_THRESHOLD, MAX_UPLOAD_SIZE_BYTES } from '../config/constants';
+import { PROJECT_PREFIX, MODERATION_CONFIDENCE_THRESHOLD } from '../config/constants';
 
 const REKOGNITION_RETRY: sfn.RetryProps = {
   errors: ['Rekognition.ThrottlingException', 'Rekognition.InternalServerError', 'States.TaskFailed'],
@@ -68,17 +68,6 @@ export class MediaStack extends cdk.Stack {
         },
       ],
     });
-
-    this.uploadsBucket.addToResourcePolicy(new iam.PolicyStatement({
-      sid: 'DenyOversizedUploads',
-      effect: iam.Effect.DENY,
-      principals: [new iam.AnyPrincipal()],
-      actions: ['s3:PutObject'],
-      resources: [this.uploadsBucket.arnForObjects('*')],
-      conditions: {
-        NumericGreaterThan: { 's3:content-length-range': MAX_UPLOAD_SIZE_BYTES },
-      },
-    }));
 
     this.mediaBucket = new s3.Bucket(this, 'MediaBucket', {
       bucketName: `${PROJECT_PREFIX}-media-${this.account}`,

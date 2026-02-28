@@ -36,6 +36,7 @@ coverage/
 
 # ===== AWS CDK / Infrastructure =====
 cdk.out/
+cdk-out-*/
 .cdk.staging/
 
 # ===== Diagrams =====
