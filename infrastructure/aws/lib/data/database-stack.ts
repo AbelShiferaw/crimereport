@@ -54,6 +54,7 @@ export class DatabaseStack extends cdk.Stack {
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
       securityGroups: [securityGroup],
       port: DB_PORT,
+      enableDataApi: true,
       storageEncrypted: true,
       backup: {
         retention: cdk.Duration.days(7),

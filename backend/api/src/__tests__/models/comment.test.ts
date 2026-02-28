@@ -4,6 +4,11 @@ import * as db from '../../lib/db';
 jest.mock('../../lib/db');
 
 const mockQuery = db.query as jest.MockedFunction<typeof db.query>;
+const mockGetClient = db.getClient as jest.MockedFunction<typeof db.getClient>;
+
+function createMockClient() {
+  return { query: jest.fn(), release: jest.fn() };
+}
 
 describe('comment model', () => {
   beforeEach(() => {
@@ -79,6 +84,91 @@ describe('comment model', () => {
       const result = await commentModel.countByReportId('r1');
 
       expect(result).toBe(42);
+    });
+  });
+
+  describe('findById', () => {
+    it('returns comment when found', async () => {
+      const fakeRow = { id: 'c1', report_id: 'r1', device_id: 'd1', content: 'Hello' };
+      mockQuery.mockResolvedValueOnce({ rows: [fakeRow], rowCount: 1 } as any);
+
+      const result = await commentModel.findById('c1');
+
+      expect(result).toEqual(fakeRow);
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE id = $1'),
+        ['c1'],
+      );
+    });
+
+    it('returns null when not found', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
+
+      const result = await commentModel.findById('nonexistent');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('createForReport', () => {
+    it('inserts comment and increments report count in a transaction', async () => {
+      const client = createMockClient();
+      mockGetClient.mockResolvedValueOnce(client as any);
+
+      const fakeRow = { id: 'c-new', report_id: 'r1', device_id: 'd1', content: 'Watch out' };
+      client.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockResolvedValueOnce({ rows: [fakeRow] }) // INSERT
+        .mockResolvedValueOnce(undefined) // UPDATE comment_count
+        .mockResolvedValueOnce(undefined); // COMMIT
+
+      const result = await commentModel.createForReport({
+        report_id: 'r1',
+        device_id: 'd1',
+        content: 'Watch out',
+      });
+
+      expect(result.id).toBe('c-new');
+      expect(client.query).toHaveBeenCalledWith('BEGIN');
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO comments'),
+        ['r1', 'd1', 'Watch out'],
+      );
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('comment_count = comment_count + 1'),
+        ['r1'],
+      );
+      expect(client.query).toHaveBeenCalledWith('COMMIT');
+      expect(client.release).toHaveBeenCalled();
+    });
+
+    it('rolls back on error and re-throws', async () => {
+      const client = createMockClient();
+      mockGetClient.mockResolvedValueOnce(client as any);
+
+      client.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockRejectedValueOnce(new Error('db error'));
+
+      await expect(
+        commentModel.createForReport({ report_id: 'r1', device_id: 'd1', content: 'Test' }),
+      ).rejects.toThrow('db error');
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(client.release).toHaveBeenCalled();
+    });
+  });
+
+  describe('countTodayByDevice', () => {
+    it('returns count of comments in the last 24 hours', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: '7' }], rowCount: 1 } as any);
+
+      const result = await commentModel.countTodayByDevice('d1');
+
+      expect(result).toBe(7);
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('24 hours'),
+        ['d1'],
+      );
     });
   });
 });

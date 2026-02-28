@@ -70,6 +70,13 @@ export interface Comment {
   device_id: string;
   content: string;
   upvotes: number;
+  flag_count: number;
+  created_at: Date;
+}
+
+export interface CommentFlag {
+  comment_id: string;
+  device_id: string;
   created_at: Date;
 }
 
