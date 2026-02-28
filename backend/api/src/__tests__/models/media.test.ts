@@ -42,7 +42,7 @@ describe('media model', () => {
       expect(result.id).toBe('m-new');
       expect(mockQuery).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO media'),
-        ['r1', 'image', 'https://cdn/new.jpg', null, null, null, null],
+        ['r1', 'image', 'https://cdn/new.jpg', null, null, null, null, null],
       );
     });
   });

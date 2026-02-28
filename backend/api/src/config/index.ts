@@ -34,6 +34,13 @@ export const config = {
     port: envInt('REDIS_PORT', 6379),
   },
 
+  aws: {
+    region: env('AWS_REGION', 'us-east-1'),
+    s3UploadsBucket: env('S3_UPLOADS_BUCKET', ''),
+    s3MediaBucket: env('S3_MEDIA_BUCKET', ''),
+    cdnDomain: env('CDN_DOMAIN', ''),
+  },
+
   get isDev() {
     return this.nodeEnv === 'development';
   },

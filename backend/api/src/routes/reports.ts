@@ -1,8 +1,12 @@
+import { randomUUID } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { validate } from '../middleware/validate';
 import { createReportSchema, nearbyQuerySchema, upvoteSchema } from '../validators/report';
 import { createCommentSchema, commentListQuerySchema } from '../validators/comment';
+import { uploadRequestSchema, uploadCompleteSchema } from '../validators/media';
 import { HttpError } from '../lib/errors';
+import { config } from '../config';
+import * as s3 from '../lib/s3';
 import * as reportModel from '../models/report';
 import * as mediaModel from '../models/media';
 import * as commentModel from '../models/comment';
@@ -11,6 +15,7 @@ import * as deviceActivity from '../models/device-activity';
 
 const MAX_DAILY_REPORTS = 10;
 const MAX_DAILY_COMMENTS = 50;
+const MAX_MEDIA_PER_REPORT = 5;
 
 const router = Router();
 
@@ -126,5 +131,169 @@ router.post(
     res.status(201).json(comment);
   },
 );
+
+// ────────────────────────────────────────────────
+// Media upload sub-routes (nested under /reports/:id)
+// ────────────────────────────────────────────────
+
+const CONTENT_TYPE_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+};
+
+const UPLOAD_ALLOWED_STATUSES = new Set(['pending', 'uploading', 'failed']);
+
+router.post(
+  '/:id/upload',
+  validate(uploadRequestSchema),
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { device_id, file_type, content_type } = req.body;
+
+    const report = await reportModel.findById(id);
+    if (!report) {
+      throw HttpError.notFound('Report not found');
+    }
+
+    if (report.device_id !== device_id) {
+      throw HttpError.forbidden('Not authorized to upload to this report');
+    }
+
+    if (report.status === 'removed') {
+      throw HttpError.forbidden('Cannot upload to a removed report');
+    }
+
+    if (!UPLOAD_ALLOWED_STATUSES.has(report.status)) {
+      throw HttpError.conflict('Report already has media being processed or active');
+    }
+
+    const device = await deviceActivity.getOrCreate(device_id);
+    if (device.flagged) {
+      throw HttpError.forbidden('This device has been flagged for abuse');
+    }
+
+    const existingMedia = await mediaModel.findByReportId(id);
+    if (existingMedia.length >= MAX_MEDIA_PER_REPORT) {
+      throw HttpError.badRequest(`Maximum of ${MAX_MEDIA_PER_REPORT} media items per report`);
+    }
+
+    const ext = CONTENT_TYPE_TO_EXT[content_type] ?? 'bin';
+    const fileId = randomUUID();
+    const mediaKey = s3.buildMediaKey(file_type, id, fileId, ext);
+
+    const { url: uploadUrl, expiresIn } = await s3.generateUploadUrl(mediaKey, content_type);
+
+    await mediaModel.create({
+      report_id: id,
+      type: file_type,
+      url: '',
+      media_key: mediaKey,
+    });
+
+    await reportModel.updateStatus(id, 'uploading');
+
+    res.status(201).json({ upload_url: uploadUrl, media_key: mediaKey, expires_in: expiresIn });
+  },
+);
+
+router.post(
+  '/:id/upload/complete',
+  validate(uploadCompleteSchema),
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { device_id, media_key } = req.body;
+
+    const report = await reportModel.findById(id);
+    if (!report) {
+      throw HttpError.notFound('Report not found');
+    }
+
+    if (report.device_id !== device_id) {
+      throw HttpError.forbidden('Not authorized for this report');
+    }
+
+    const media = await mediaModel.findByMediaKey(media_key);
+    if (!media || media.report_id !== id) {
+      throw HttpError.notFound('Media not found for this report');
+    }
+
+    if (media.status === 'processing' || media.status === 'active') {
+      res.json({ status: media.status });
+      return;
+    }
+
+    const exists = await s3.objectExists(config.aws.s3UploadsBucket, media_key);
+    if (!exists) {
+      throw HttpError.badRequest('File not found in uploads bucket. Upload may have failed.');
+    }
+
+    await mediaModel.updateStatus(media_key, 'processing');
+    await reportModel.updateStatus(id, 'processing');
+
+    res.json({ status: 'processing' });
+  },
+);
+
+router.get('/:id/media/status', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  const report = await reportModel.findById(id);
+  if (!report) {
+    throw HttpError.notFound('Report not found');
+  }
+
+  const mediaItems = await mediaModel.findByReportId(id);
+
+  if (mediaItems.length === 0) {
+    res.json({ status: report.status, media: [] });
+    return;
+  }
+
+  const results = await Promise.all(
+    mediaItems.map(async (item) => {
+      if (item.status === 'active') return item;
+      if (!item.media_key) return item;
+
+      const processedKey = item.media_key;
+      const processed = await s3.objectExists(config.aws.s3MediaBucket, processedKey);
+
+      if (processed) {
+        const cdnUrl = s3.buildCdnUrl(processedKey);
+
+        const thumbnailKey = processedKey.replace(/\.[^.]+$/, '_thumb.jpg');
+        const hasThumb = await s3.objectExists(config.aws.s3MediaBucket, thumbnailKey);
+        const thumbUrl = hasThumb ? s3.buildCdnUrl(thumbnailKey) : null;
+
+        const updated = await mediaModel.updateUrls(processedKey, cdnUrl, thumbUrl);
+        return updated ?? item;
+      }
+
+      const stillInUploads = await s3.objectExists(config.aws.s3UploadsBucket, processedKey);
+      if (!stillInUploads && item.status === 'processing') {
+        await mediaModel.updateStatus(processedKey, 'failed');
+        return { ...item, status: 'failed' };
+      }
+
+      return item;
+    }),
+  );
+
+  const allActive = results.every((m) => m.status === 'active');
+  const anyFailed = results.some((m) => m.status === 'failed');
+
+  if (allActive && report.status !== 'active') {
+    await reportModel.updateStatus(id, 'active');
+  } else if (anyFailed && report.status === 'processing') {
+    await reportModel.updateStatus(id, 'failed');
+  }
+
+  const currentStatus = allActive ? 'active' : anyFailed ? 'failed' : report.status;
+
+  res.json({ status: currentStatus, media: results });
+});
 
 export default router;

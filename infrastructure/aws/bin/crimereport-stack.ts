@@ -81,6 +81,9 @@ const computeStack = new ComputeStack(app, 'CrimeReport-Compute', {
   redisPort: cacheStack.redisPort,
   wafAclArn: wafStack.webAclArn,
   dockerDir: path.join(__dirname, '..', '..', '..', 'backend', 'api'),
+  s3UploadsBucket: mediaStack.uploadsBucket.bucketName,
+  s3MediaBucket: mediaStack.mediaBucket.bucketName,
+  cdnDomain: mediaStack.distribution.distributionDomainName,
 });
 computeStack.addDependency(networkStack);
 computeStack.addDependency(securityStack);
@@ -88,6 +91,7 @@ computeStack.addDependency(iamStack);
 computeStack.addDependency(databaseStack);
 computeStack.addDependency(cacheStack);
 computeStack.addDependency(wafStack);
+computeStack.addDependency(mediaStack);
 
 const monitoringStack = new MonitoringStack(app, 'CrimeReport-Monitoring', {
   env,

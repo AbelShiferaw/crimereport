@@ -33,6 +33,9 @@ export interface ComputeStackProps extends cdk.StackProps {
   redisPort: string;
   wafAclArn: string;
   dockerDir: string;
+  s3UploadsBucket: string;
+  s3MediaBucket: string;
+  cdnDomain: string;
 }
 
 export class ComputeStack extends cdk.Stack {
@@ -56,6 +59,9 @@ export class ComputeStack extends cdk.Stack {
       redisPort,
       wafAclArn,
       dockerDir,
+      s3UploadsBucket,
+      s3MediaBucket,
+      cdnDomain,
     } = props;
 
     // ── ECR Repository ──────────────────────────────────────
@@ -133,6 +139,9 @@ export class ComputeStack extends cdk.Stack {
         PORT: String(API_PORT),
         REDIS_HOST: redisEndpoint,
         REDIS_PORT: redisPort,
+        S3_UPLOADS_BUCKET: s3UploadsBucket,
+        S3_MEDIA_BUCKET: s3MediaBucket,
+        CDN_DOMAIN: cdnDomain,
       },
       secrets: {
         DATABASE_URL: ecs.Secret.fromSecretsManager(dbSecret),

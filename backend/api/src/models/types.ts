@@ -48,6 +48,8 @@ export interface Media {
   type: 'video' | 'image';
   url: string;
   thumbnail_url: string | null;
+  media_key: string | null;
+  status: string;
   duration_ms: number | null;
   width: number | null;
   height: number | null;
@@ -58,6 +60,7 @@ export interface CreateMediaInput {
   report_id: string;
   type: 'video' | 'image';
   url: string;
+  media_key?: string;
   thumbnail_url?: string;
   duration_ms?: number;
   width?: number;

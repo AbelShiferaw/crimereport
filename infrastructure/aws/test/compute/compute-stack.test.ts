@@ -36,6 +36,9 @@ describe('ComputeStack', () => {
       redisPort: '6379',
       wafAclArn: 'arn:aws:wafv2:us-east-1:123456789012:regional/webacl/test/abc123',
       dockerDir: path.join(__dirname, '..', '..', '..', '..', 'backend', 'api'),
+      s3UploadsBucket: 'crimereport-uploads-123456789012',
+      s3MediaBucket: 'crimereport-media-123456789012',
+      cdnDomain: 'd111111abcdef8.cloudfront.net',
     });
 
     template = Template.fromStack(stack);
