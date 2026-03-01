@@ -1,127 +1,391 @@
 # Milestone 27: Media Upload Integration
 
+## Status
+Not Started
+
 ## Goal
-Complete end-to-end report submission with media upload from Flutter app to S3 and backend.
+Connect the existing camera/gallery capture flow (`CameraScreen` → `MediaPreviewScreen` → `ReportDetailsScreen`) to the backend's two-phase upload pipeline: (1) request a presigned S3 URL, (2) PUT the file directly to S3, (3) confirm upload completion, (4) poll for processing status. Uses **dio** for the S3 PUT with progress tracking.
 
 ## Dependencies
-Requires **Milestone 22** (upload endpoints) and **Milestone 25** (REST integration).
+- **Milestone 25** – `ApiClient` and `ReportRepository` in place
+- **Milestone 16** – S3 buckets, CloudFront, and Lambda/Step Functions media pipeline deployed
+- **Milestone 15** – `media` table in database
+- Backend endpoints already implemented in `backend/api/src/routes/reports.ts`:
+  - `POST /api/v1/reports/:id/upload` — returns presigned URL
+  - `POST /api/v1/reports/:id/upload/complete` — confirms upload
+  - `GET /api/v1/reports/:id/media/status` — polls processing status
 
-## Implementation
+## Plan
 
-### 1. Submit Report Flow
+### 1. Upload Service
+
+Orchestrates the two-phase upload. Uses a separate `Dio` instance for the raw S3 PUT (no auth headers, just the presigned URL). Supports progress callbacks and cancellation.
+
 ```dart
-// lib/features/submit/presentation/report_details_screen.dart (updated)
+// lib/features/submit/data/services/upload_service.dart
 
-class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
-  bool _isSubmitting = false;
-  double _uploadProgress = 0;
-  String _uploadStatus = '';
-  
-  Future<void> _submitReport() async {
-    if (_selectedType == null || _location == null) return;
-    
-    setState(() {
-      _isSubmitting = true;
-      _uploadStatus = 'Preparing upload...';
-    });
-    
-    try {
-      final uploadService = ref.read(uploadServiceProvider);
-      final reportRepo = ref.read(reportRepositoryProvider);
-      
-      // 1. Upload media
-      setState(() => _uploadStatus = 'Uploading media...');
-      
-      final uploadResult = await uploadService.uploadMedia(
-        widget.mediaPath,
-        onProgress: (sent, total) {
-          setState(() {
-            _uploadProgress = sent / total;
-          });
+import 'dart:io';
+import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
+import 'package:crimereport/shared/data/api/api_client.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+
+class UploadService {
+  final ApiClient _api;
+  final Dio _s3Dio = Dio();
+
+  UploadService(this._api);
+
+  /// Phase 1: Request a presigned upload URL from the backend.
+  /// Returns { upload_url, media_key, expires_in }.
+  Future<PresignedUpload> requestUploadUrl({
+    required String reportId,
+    required String fileType,
+    required String contentType,
+  }) async {
+    final response = await _api.dio.post(
+      '/api/v1/reports/$reportId/upload',
+      data: {
+        'device_id': _api.dio.options.headers['X-Device-ID'],
+        'file_type': fileType,
+        'content_type': contentType,
+      },
+    );
+    return PresignedUpload.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  /// Phase 2: Upload the file directly to S3 via the presigned URL.
+  Future<void> uploadToS3({
+    required String presignedUrl,
+    required File file,
+    required String contentType,
+    CancelToken? cancelToken,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    final fileLength = await file.length();
+    await _s3Dio.put(
+      presignedUrl,
+      data: file.openRead(),
+      options: Options(
+        headers: {
+          HttpHeaders.contentTypeHeader: contentType,
+          HttpHeaders.contentLengthHeader: fileLength,
         },
-      );
-      
-      // 2. Create report
-      setState(() {
-        _uploadStatus = 'Creating report...';
-        _uploadProgress = 1.0;
-      });
-      
-      final report = await reportRepo.createReport(CreateReportRequest(
-        type: _selectedType!.name,
-        description: _descriptionController.text,
-        latitude: _location!.latitude,
-        longitude: _location!.longitude,
-        address: _address,
-      ));
-      
-      // 3. Link media to report
-      setState(() => _uploadStatus = 'Processing media...');
-      
-      await uploadService.completeUpload(
-        uploadResult.uploadId,
-        report.id,
-      );
-      
-      // 4. Success!
-      _showSuccessAndNavigate();
-      
-    } catch (e) {
-      setState(() {
-        _isSubmitting = false;
-        _uploadProgress = 0;
-      });
-      
-      _showError(e.toString());
+      ),
+      cancelToken: cancelToken,
+      onSendProgress: onProgress,
+    );
+  }
+
+  /// Phase 3: Notify the backend that the S3 upload finished.
+  /// Returns the initial processing status (usually 'processing').
+  Future<String> confirmUpload({
+    required String reportId,
+    required String mediaKey,
+  }) async {
+    final response = await _api.dio.post(
+      '/api/v1/reports/$reportId/upload/complete',
+      data: {
+        'device_id': _api.dio.options.headers['X-Device-ID'],
+        'media_key': mediaKey,
+      },
+    );
+    return response.data['status'] as String;
+  }
+
+  /// Phase 4: Poll the media processing status until 'active' or 'failed'.
+  /// Yields status strings so the UI can update.
+  Stream<MediaPollResult> pollMediaStatus(String reportId) async* {
+    const pollInterval = Duration(seconds: 3);
+    const maxAttempts = 60; // 3 minutes max
+
+    for (var i = 0; i < maxAttempts; i++) {
+      await Future.delayed(pollInterval);
+      final response = await _api.dio.get('/api/v1/reports/$reportId/media/status');
+      final status = response.data['status'] as String;
+      final media = response.data['media'] as List<dynamic>;
+
+      yield MediaPollResult(status: status, mediaItems: media);
+
+      if (status == 'active' || status == 'failed') break;
     }
   }
-  
-  void _showSuccessAndNavigate() {
-    // Navigate back to feed
+
+  /// Determine content type from file extension.
+  static String contentTypeFor(String filePath) {
+    final ext = p.extension(filePath).toLowerCase();
+    return switch (ext) {
+      '.jpg' || '.jpeg' => 'image/jpeg',
+      '.png' => 'image/png',
+      '.webp' => 'image/webp',
+      '.mp4' => 'video/mp4',
+      '.mov' => 'video/quicktime',
+      '.webm' => 'video/webm',
+      _ => throw UnsupportedError('Unsupported file type: $ext'),
+    };
+  }
+
+  /// Determine file_type ('image' or 'video') from content type.
+  static String fileTypeFor(String contentType) {
+    return contentType.startsWith('video/') ? 'video' : 'image';
+  }
+
+  /// Validate file size before uploading.
+  static Future<void> validateFileSize(File file, String contentType) async {
+    final bytes = await file.length();
+    final isVideo = contentType.startsWith('video/');
+    final maxBytes = isVideo
+        ? AppConstants.maxVideoSizeMB * 1024 * 1024
+        : AppConstants.maxImageSizeMB * 1024 * 1024;
+
+    if (bytes > maxBytes) {
+      final maxMB = isVideo ? AppConstants.maxVideoSizeMB : AppConstants.maxImageSizeMB;
+      throw FileTooLargeException('File exceeds ${maxMB}MB limit');
+    }
+  }
+}
+
+class PresignedUpload {
+  final String uploadUrl;
+  final String mediaKey;
+  final int expiresIn;
+
+  PresignedUpload({required this.uploadUrl, required this.mediaKey, required this.expiresIn});
+
+  factory PresignedUpload.fromJson(Map<String, dynamic> json) => PresignedUpload(
+        uploadUrl: json['upload_url'] as String,
+        mediaKey: json['media_key'] as String,
+        expiresIn: json['expires_in'] as int,
+      );
+}
+
+class MediaPollResult {
+  final String status;
+  final List<dynamic> mediaItems;
+  MediaPollResult({required this.status, required this.mediaItems});
+}
+
+class FileTooLargeException implements Exception {
+  final String message;
+  FileTooLargeException(this.message);
+  @override
+  String toString() => message;
+}
+
+final uploadServiceProvider = Provider<UploadService>((ref) {
+  return UploadService(ref.watch(apiClientProvider));
+});
+```
+
+### 2. Upload State Notifier
+
+Manages the full submit-and-upload lifecycle as a state machine. The `ReportDetailsScreen` watches this provider to drive the overlay UI.
+
+```dart
+// lib/features/submit/providers/upload_provider.dart
+
+import 'dart:async';
+import 'dart:io';
+import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:crimereport/features/feed/data/repositories/report_repository.dart';
+import 'package:crimereport/features/submit/data/services/upload_service.dart';
+
+enum UploadPhase { idle, creatingReport, requestingUrl, uploading, confirming, processing, done, error }
+
+class UploadState {
+  final UploadPhase phase;
+  final double progress;
+  final String? errorMessage;
+  final String? reportId;
+
+  const UploadState({
+    this.phase = UploadPhase.idle,
+    this.progress = 0,
+    this.errorMessage,
+    this.reportId,
+  });
+
+  UploadState copyWith({UploadPhase? phase, double? progress, String? errorMessage, String? reportId}) =>
+      UploadState(
+        phase: phase ?? this.phase,
+        progress: progress ?? this.progress,
+        errorMessage: errorMessage ?? this.errorMessage,
+        reportId: reportId ?? this.reportId,
+      );
+
+  String get statusText => switch (phase) {
+        UploadPhase.idle => '',
+        UploadPhase.creatingReport => 'Creating report...',
+        UploadPhase.requestingUrl => 'Preparing upload...',
+        UploadPhase.uploading => 'Uploading media... ${(progress * 100).toInt()}%',
+        UploadPhase.confirming => 'Confirming upload...',
+        UploadPhase.processing => 'Processing media...',
+        UploadPhase.done => 'Done!',
+        UploadPhase.error => errorMessage ?? 'Upload failed',
+      };
+}
+
+class UploadNotifier extends StateNotifier<UploadState> {
+  final ReportRepository _reportRepo;
+  final UploadService _uploadService;
+  CancelToken? _cancelToken;
+
+  UploadNotifier(this._reportRepo, this._uploadService) : super(const UploadState());
+
+  Future<void> submit({
+    required String filePath,
+    required String type,
+    required String description,
+    required double lat,
+    required double lng,
+    String? address,
+  }) async {
+    _cancelToken = CancelToken();
+
+    try {
+      // 1. Create the report
+      state = state.copyWith(phase: UploadPhase.creatingReport);
+      final report = await _reportRepo.createReport(
+        type: type,
+        description: description,
+        lat: lat,
+        lng: lng,
+        address: address,
+      );
+      state = state.copyWith(reportId: report.id);
+
+      // 2. Request presigned URL
+      state = state.copyWith(phase: UploadPhase.requestingUrl);
+      final contentType = UploadService.contentTypeFor(filePath);
+      final fileType = UploadService.fileTypeFor(contentType);
+      final file = File(filePath);
+
+      await UploadService.validateFileSize(file, contentType);
+
+      final presigned = await _uploadService.requestUploadUrl(
+        reportId: report.id,
+        fileType: fileType,
+        contentType: contentType,
+      );
+
+      // 3. Upload to S3
+      state = state.copyWith(phase: UploadPhase.uploading, progress: 0);
+      await _uploadService.uploadToS3(
+        presignedUrl: presigned.uploadUrl,
+        file: file,
+        contentType: contentType,
+        cancelToken: _cancelToken,
+        onProgress: (sent, total) {
+          if (total > 0) state = state.copyWith(progress: sent / total);
+        },
+      );
+
+      // 4. Confirm upload
+      state = state.copyWith(phase: UploadPhase.confirming, progress: 1.0);
+      await _uploadService.confirmUpload(
+        reportId: report.id,
+        mediaKey: presigned.mediaKey,
+      );
+
+      // 5. Done — processing happens server-side asynchronously
+      state = state.copyWith(phase: UploadPhase.done);
+
+    } on FileTooLargeException catch (e) {
+      state = state.copyWith(phase: UploadPhase.error, errorMessage: e.message);
+    } on DioException catch (e) {
+      if (e.type == DioExceptionType.cancel) return;
+      state = state.copyWith(phase: UploadPhase.error, errorMessage: 'Upload failed. Please try again.');
+    } catch (e) {
+      state = state.copyWith(phase: UploadPhase.error, errorMessage: e.toString());
+    }
+  }
+
+  void cancel() {
+    _cancelToken?.cancel();
+    state = const UploadState();
+  }
+
+  void reset() => state = const UploadState();
+}
+
+final uploadProvider = StateNotifierProvider.autoDispose<UploadNotifier, UploadState>((ref) {
+  return UploadNotifier(
+    ref.watch(reportRepositoryProvider),
+    ref.watch(uploadServiceProvider),
+  );
+});
+```
+
+### 3. Update ReportDetailsScreen
+
+Replace the mock `_submit()` with the real upload flow. The screen watches `uploadProvider` to drive the overlay state.
+
+```dart
+// lib/features/submit/presentation/report_details_screen.dart  (key changes)
+
+// Convert to ConsumerStatefulWidget, add WidgetRef access.
+// Replace the existing _submit() method:
+
+Future<void> _submit() async {
+  if (!_isFormValid || _isSubmitting) return;
+  _descriptionFocus.unfocus();
+
+  ref.read(uploadProvider.notifier).submit(
+    filePath: widget.filePath,
+    type: _selectedType!.name,
+    description: _descriptionController.text.trim(),
+    lat: _location!.latitude,
+    lng: _location!.longitude,
+  );
+}
+
+// In build(), wrap with a listener that navigates on success:
+ref.listen<UploadState>(uploadProvider, (_, state) {
+  if (state.phase == UploadPhase.done) {
     Navigator.of(context).popUntil((route) => route.isFirst);
-    
-    // Show success message
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.white),
-            SizedBox(width: 8),
-            Text('Report submitted successfully!'),
-          ],
-        ),
+      const SnackBar(
+        content: Text('Report submitted! Media is processing.'),
         backgroundColor: Colors.green,
         behavior: SnackBarBehavior.floating,
       ),
     );
-    
-    // Refresh feed
-    ref.invalidate(nearbyReportsProvider);
+    ref.invalidate(feedReportsProvider);
   }
-  
+});
+
+// Show the upload overlay when phase != idle:
+final uploadState = ref.watch(uploadProvider);
+if (uploadState.phase != UploadPhase.idle) _buildUploadOverlay(uploadState),
+```
+
+### 4. Upload Overlay Widget
+
+A full-screen overlay showing phase progress, percentage, and a cancel button.
+
+```dart
+// lib/features/submit/presentation/widgets/upload_overlay.dart
+
+import 'package:flutter/material.dart';
+import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/submit/providers/upload_provider.dart';
+
+class UploadOverlay extends StatelessWidget {
+  final UploadState state;
+  final VoidCallback onCancel;
+
+  const UploadOverlay({super.key, required this.state, required this.onCancel});
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          // ... existing form UI ...
-          
-          // Upload overlay
-          if (_isSubmitting)
-            _buildUploadOverlay(),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildUploadOverlay() {
     return Container(
-      color: Colors.black.withOpacity(0.8),
+      color: Colors.black.withAlpha(200),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Progress circle
             SizedBox(
               width: 100,
               height: 100,
@@ -129,34 +393,30 @@ class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
                 alignment: Alignment.center,
                 children: [
                   CircularProgressIndicator(
-                    value: _uploadProgress,
+                    value: state.phase == UploadPhase.uploading ? state.progress : null,
                     strokeWidth: 6,
-                    backgroundColor: Colors.grey[700],
-                    color: Colors.red,
+                    backgroundColor: Colors.grey[800],
+                    color: state.phase == UploadPhase.error ? Colors.red : AppColors.primary,
                   ),
-                  Text(
-                    '${(_uploadProgress * 100).toInt()}%',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
+                  if (state.phase == UploadPhase.uploading)
+                    Text(
+                      '${(state.progress * 100).toInt()}%',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
                     ),
-                  ),
+                  if (state.phase == UploadPhase.error)
+                    const Icon(Icons.error_outline, color: Colors.red, size: 36),
+                  if (state.phase == UploadPhase.done)
+                    const Icon(Icons.check_circle, color: Colors.green, size: 36),
                 ],
               ),
             ),
-            SizedBox(height: 24),
-            
-            Text(
-              _uploadStatus,
-              style: TextStyle(color: Colors.white, fontSize: 16),
-            ),
-            SizedBox(height: 8),
-            
-            Text(
-              widget.isVideo ? 'Video will be processed shortly' : '',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
-            ),
+            const SizedBox(height: 24),
+            Text(state.statusText, style: const TextStyle(color: Colors.white, fontSize: 16)),
+            const SizedBox(height: 16),
+            if (state.phase == UploadPhase.uploading)
+              TextButton(onPressed: onCancel, child: const Text('Cancel', style: TextStyle(color: Colors.grey))),
+            if (state.phase == UploadPhase.error)
+              TextButton(onPressed: onCancel, child: const Text('Dismiss', style: TextStyle(color: Colors.grey))),
           ],
         ),
       ),
@@ -165,268 +425,100 @@ class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
 }
 ```
 
-### 2. Enhanced Upload Service
-```dart
-// lib/features/submit/data/services/upload_service.dart (updated)
+### 5. Pending Upload Tracker (optional background polling)
 
-class UploadService {
-  final ApiClient _api;
-  final Dio _uploadDio;
-  
-  UploadService(this._api) : _uploadDio = Dio();
-  
-  Future<UploadResult> uploadMedia(
-    String filePath, {
-    void Function(int sent, int total)? onProgress,
-    CancelToken? cancelToken,
-  }) async {
-    final file = File(filePath);
-    final filename = path.basename(filePath);
-    final contentType = _getContentType(filename);
-    final fileSize = await file.length();
-    
-    // Validate file before upload
-    await _validateFile(file, contentType);
-    
-    // Get presigned URL
-    final presigned = await _api.post<Map<String, dynamic>>(
-      '/api/v1/uploads/presigned-url',
-      data: {
-        'filename': filename,
-        'contentType': contentType,
-        'fileSize': fileSize,
-      },
-    );
-    
-    // Upload to S3 with progress
-    await _uploadDio.put(
-      presigned['uploadUrl'],
-      data: file.openRead(),
-      options: Options(
-        headers: {
-          'Content-Type': contentType,
-          'Content-Length': fileSize,
-        },
-      ),
-      onSendProgress: onProgress,
-      cancelToken: cancelToken,
-    );
-    
-    return UploadResult(
-      uploadId: presigned['uploadId'],
-      key: presigned['key'],
-    );
-  }
-  
-  Future<void> _validateFile(File file, String contentType) async {
-    final fileSize = await file.length();
-    final isVideo = contentType.startsWith('video/');
-    
-    final maxSize = isVideo
-        ? 100 * 1024 * 1024  // 100MB for video
-        : 10 * 1024 * 1024;  // 10MB for images
-    
-    if (fileSize > maxSize) {
-      throw UploadException(
-        'File too large. Maximum size: ${maxSize ~/ (1024 * 1024)}MB'
-      );
-    }
-    
-    // Check file exists and is readable
-    if (!await file.exists()) {
-      throw UploadException('File not found');
-    }
-  }
-}
+For reports where the user navigated away before processing finished, track pending uploads and poll in the background. Useful for video reports that take longer to transcode.
 
-class UploadException implements Exception {
-  final String message;
-  UploadException(this.message);
-  
-  @override
-  String toString() => message;
-}
-```
-
-### 3. Video Compression (Optional but Recommended)
-```dart
-// lib/features/submit/data/services/video_compressor.dart
-
-import 'package:video_compress/video_compress.dart';
-
-class VideoCompressor {
-  Future<File?> compressVideo(String path, {
-    void Function(double progress)? onProgress,
-  }) async {
-    final subscription = VideoCompress.compressProgress$.subscribe((progress) {
-      onProgress?.call(progress);
-    });
-    
-    try {
-      final info = await VideoCompress.compressVideo(
-        path,
-        quality: VideoQuality.MediumQuality,
-        deleteOrigin: false,
-        includeAudio: true,
-      );
-      
-      return info?.file;
-    } finally {
-      subscription.unsubscribe();
-    }
-  }
-  
-  Future<File?> generateThumbnail(String videoPath) async {
-    final thumbnail = await VideoCompress.getFileThumbnail(
-      videoPath,
-      quality: 50,
-      position: -1, // First frame
-    );
-    return thumbnail;
-  }
-}
-```
-
-### 4. Report Creation Request
-```dart
-// lib/features/submit/data/models/create_report_request.dart
-
-class CreateReportRequest {
-  final String type;
-  final String description;
-  final double latitude;
-  final double longitude;
-  final String? address;
-  
-  CreateReportRequest({
-    required this.type,
-    required this.description,
-    required this.latitude,
-    required this.longitude,
-    this.address,
-  });
-  
-  Map<String, dynamic> toJson() => {
-    'type': type,
-    'description': description,
-    'latitude': latitude,
-    'longitude': longitude,
-    if (address != null) 'address': address,
-  };
-}
-```
-
-### 5. Pending Upload Status Tracker
 ```dart
 // lib/features/submit/providers/pending_uploads_provider.dart
 
-final pendingUploadsProvider = StateNotifierProvider<
-    PendingUploadsNotifier, Map<String, PendingUpload>>((ref) {
-  return PendingUploadsNotifier();
-});
+import 'dart:async';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:crimereport/features/submit/data/services/upload_service.dart';
 
 class PendingUpload {
   final String reportId;
-  final String mediaId;
-  final String status; // 'processing', 'ready', 'failed'
+  final String status;
   final DateTime createdAt;
-  
-  PendingUpload({
-    required this.reportId,
-    required this.mediaId,
-    required this.status,
-    required this.createdAt,
-  });
+  PendingUpload({required this.reportId, required this.status, required this.createdAt});
 }
 
 class PendingUploadsNotifier extends StateNotifier<Map<String, PendingUpload>> {
-  PendingUploadsNotifier() : super({});
-  
-  void addPending(PendingUpload upload) {
-    state = {...state, upload.reportId: upload};
+  final UploadService _uploadService;
+  final Map<String, StreamSubscription> _pollers = {};
+
+  PendingUploadsNotifier(this._uploadService) : super({});
+
+  void track(String reportId) {
+    state = {
+      ...state,
+      reportId: PendingUpload(reportId: reportId, status: 'processing', createdAt: DateTime.now()),
+    };
+    _startPolling(reportId);
   }
-  
-  void updateStatus(String reportId, String status) {
-    if (state.containsKey(reportId)) {
+
+  void _startPolling(String reportId) {
+    _pollers[reportId]?.cancel();
+    _pollers[reportId] = _uploadService.pollMediaStatus(reportId).listen((result) {
       state = {
         ...state,
-        reportId: PendingUpload(
-          reportId: reportId,
-          mediaId: state[reportId]!.mediaId,
-          status: status,
-          createdAt: state[reportId]!.createdAt,
-        ),
+        reportId: PendingUpload(reportId: reportId, status: result.status, createdAt: state[reportId]!.createdAt),
       };
-    }
+      if (result.status == 'active' || result.status == 'failed') {
+        _pollers[reportId]?.cancel();
+        _pollers.remove(reportId);
+        // Auto-remove successful uploads after a delay
+        if (result.status == 'active') {
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) {
+              state = Map.from(state)..remove(reportId);
+            }
+          });
+        }
+      }
+    });
   }
-  
-  void removePending(String reportId) {
-    state = Map.from(state)..remove(reportId);
+
+  @override
+  void dispose() {
+    for (final sub in _pollers.values) {
+      sub.cancel();
+    }
+    super.dispose();
   }
 }
-```
 
-### 6. Handle Media Ready WebSocket Event
-```dart
-// In websocket_service.dart, add to _setupListeners:
-
-_socket!.on('media:ready', (data) {
-  final reportId = data['data']['reportId'];
-  final media = Media.fromJson(data['data']['media']);
-  
-  // Update pending uploads
-  ref.read(pendingUploadsProvider.notifier).updateStatus(reportId, 'ready');
-  
-  // Update report in feed
-  ref.read(realtimeFeedProvider.notifier).updateMedia(reportId, media);
+final pendingUploadsProvider =
+    StateNotifierProvider<PendingUploadsNotifier, Map<String, PendingUpload>>((ref) {
+  return PendingUploadsNotifier(ref.watch(uploadServiceProvider));
 });
 ```
 
-## Upload Flow Diagram
-```
-User Captures Media
-        │
-        ▼
-    [Compress?] ───(video)──> Compress Video
-        │                          │
-        │<─────────────────────────┘
-        ▼
-POST /api/reports (metadata)
-  → API creates report (status: processing)
-  → Returns reportId + presigned S3 URL
-        │
-        ▼
-Upload to S3 via presigned URL (with progress)
-        │
-        ├─────(image)────> Step Functions: Rekognition → copy to media bucket → Ready
-        │
-        └─────(video)────> Step Functions: Rekognition → MediaConvert → Processing...
-                               │
-                               ▼
-                     (Future) Step Functions updates DB + sends push
-                     WebSocket: media:ready
-                               │
-                               ▼
-                         Update UI
-```
+## Testing Plan
 
-## Deliverable Checklist
-- [ ] Submit flow shows upload progress
-- [ ] Progress percentage accurate
-- [ ] Status text updates through stages
-- [ ] Video compression reduces file size
-- [ ] Large files handled without crashing
-- [ ] Upload cancellation works
-- [ ] Error handling shows user-friendly message
-- [ ] Success navigates to feed
-- [ ] Feed refreshes with new report
-- [ ] Video shows "processing" then updates when ready
-- [ ] Multiple uploads don't conflict
+- **Unit tests** for `UploadService` — mock dio, verify correct URL/body for `requestUploadUrl`, `confirmUpload`, and `pollMediaStatus`. Verify `contentTypeFor` mapping.
+- **Unit tests** for `UploadNotifier` — walk through the state machine: idle → creatingReport → requestingUrl → uploading → confirming → done. Verify error states. Verify cancel resets state.
+- **Unit tests** for `validateFileSize` — verify it throws `FileTooLargeException` for oversized files.
+- **Widget tests** for `UploadOverlay` — verify progress percentage display, cancel button visibility per phase.
+- **Integration test** — capture media via camera, fill form, submit, verify presigned URL request, S3 PUT, confirm call, and navigation back to feed.
 
-## Files (6 total)
-1. `lib/features/submit/presentation/report_details_screen.dart` - Update
-2. `lib/features/submit/data/services/upload_service.dart` - Update
-3. `lib/features/submit/data/services/video_compressor.dart` - Create
-4. `lib/features/submit/data/models/create_report_request.dart` - Create
-5. `lib/features/submit/providers/pending_uploads_provider.dart` - Create
-6. `pubspec.yaml` - Add video_compress dependency
+## Notes
+
+- **Two-phase upload flow:** The backend creates the report first (POST `/reports`), then the client requests an upload URL (POST `/reports/:id/upload`), uploads to S3, and confirms (POST `/reports/:id/upload/complete`). This matches the existing backend exactly — see `reports.ts` lines 150-238.
+- **Report status lifecycle:** `pending` → `uploading` → `processing` → `active` (or `failed`). The backend sets `uploading` on presigned URL request and `processing` on confirm. The Step Functions pipeline moves to `active` when done.
+- **`ReportDetailsScreen` becomes `ConsumerStatefulWidget`** — currently a plain `StatefulWidget`. Needs `WidgetRef` to read providers.
+- **No new dependencies** — uses `dio` (already present) for S3 PUT. The `path` package is available via Flutter SDK.
+- **Video compression** is deferred — can be added later with `video_compress` if needed. The backend's MediaConvert pipeline handles transcoding.
+- **The `media:ready` WebSocket event** (Milestone 26) will also fire when processing completes, which can be used to update the feed in addition to polling.
+- **File size limits** reference `AppConstants.maxVideoSizeMB` (100) and `AppConstants.maxImageSizeMB` (10), already defined.
+
+## Files
+
+| # | Path | Action |
+|---|------|--------|
+| 1 | `lib/features/submit/data/services/upload_service.dart` | Create |
+| 2 | `lib/features/submit/providers/upload_provider.dart` | Create |
+| 3 | `lib/features/submit/providers/pending_uploads_provider.dart` | Create |
+| 4 | `lib/features/submit/presentation/widgets/upload_overlay.dart` | Create |
+| 5 | `lib/features/submit/presentation/report_details_screen.dart` | Modify — convert to ConsumerStatefulWidget, wire up uploadProvider |
+| 6 | `lib/features/submit/presentation/media_preview_screen.dart` | Modify — pass through to updated ReportDetailsScreen |

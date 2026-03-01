@@ -1,191 +1,314 @@
 # Milestone 16: Media Infrastructure
 
+## Status
+Completed
+
 ## Goal
-Set up S3 for media storage, CloudFront CDN for delivery, and MediaConvert for video processing.
+Set up S3 for media storage, CloudFront CDN for delivery, and a Step Functions pipeline orchestrating Rekognition content moderation and MediaConvert video transcoding — with separate paths for images and videos.
 
 ## Dependencies
-Requires **Milestone 14** complete (IAM roles).
+- **Milestone 14** complete (IAM roles, VPC)
+- AWS CDK CLI, Node.js 20+
 
-## Implementation
+## What Was Built
+
+A single **MediaStack** CDK stack containing:
+
+1. **S3 Buckets** — Uploads bucket (CORS, EventBridge notifications, 1-day lifecycle) and a private media bucket for processed content
+2. **CloudFront Distribution** — OAC-based CDN serving the media bucket with HTTP/2+3, HTTPS redirect, and `PriceClass_100`
+3. **Step Functions State Machine** — Full media processing pipeline:
+   - Routes by file type (`images/*` vs `videos/*`)
+   - **Image path**: Sync Rekognition `DetectModerationLabels` → S3 copy to media bucket
+   - **Video path**: Async Rekognition `StartContentModeration` → polling loop → Lambda for MediaConvert transcoding
+   - Flagged content is deleted immediately from the uploads bucket
+   - Retry policies with exponential backoff on all Rekognition and S3 calls
+4. **EventBridge Rule** — Triggers the state machine on `Object Created` events for `videos/` and `images/` prefixes
+5. **Lambda** — MediaConvert job builder (Node.js 20, ARM64) invoked by Step Functions for video transcoding
+6. **SQS Dead Letter Queue** — 14-day retention with a CloudWatch alarm on message visibility
+7. **MediaConvert IAM Role** — Read from uploads, write to media bucket
+
+## Key Files
+
+| File | Description |
+|------|-------------|
+| `infrastructure/aws/lib/media/media-stack.ts` | All media infrastructure (S3, CloudFront, Step Functions, EventBridge, Lambda, SQS DLQ, MediaConvert role) |
+| `infrastructure/aws/lib/config/constants.ts` | `MODERATION_CONFIDENCE_THRESHOLD` (80), `PROJECT_PREFIX` |
+| `backend/functions/transcode-trigger/index.ts` | Lambda: discovers MediaConvert endpoint, builds and submits transcoding job |
+| `infrastructure/aws/test/media/media-stack.test.ts` | CDK assertion tests (23 tests) |
+| `infrastructure/aws/bin/crimereport-stack.ts` | Stack wiring — MediaStack exports bucket names and CDN domain to ComputeStack |
+
+## Implementation Details
 
 ### 1. S3 Buckets
-```hcl
-# infrastructure/storage.tf
 
-# Raw uploads bucket
-resource "aws_s3_bucket" "uploads" {
-  bucket = "reportcrime-uploads-${var.environment}"
-}
+```typescript
+// infrastructure/aws/lib/media/media-stack.ts
 
-resource "aws_s3_bucket_cors_configuration" "uploads" {
-  bucket = aws_s3_bucket.uploads.id
-  
-  cors_rule {
-    allowed_headers = ["*"]
-    allowed_methods = ["PUT", "POST"]
-    allowed_origins = ["*"]  # Restrict in production
-    max_age_seconds = 3600
-  }
-}
+this.uploadsBucket = new s3.Bucket(this, 'UploadsBucket', {
+  bucketName: `${PROJECT_PREFIX}-uploads-${this.account}`,
+  encryption: s3.BucketEncryption.S3_MANAGED,
+  blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+  enforceSSL: true,
+  versioned: false,
+  removalPolicy: cdk.RemovalPolicy.DESTROY,
+  autoDeleteObjects: true,
+  eventBridgeEnabled: true,
+  cors: [
+    {
+      allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.POST],
+      allowedOrigins: ['*'],
+      allowedHeaders: ['*'],
+      maxAge: 3600,
+    },
+  ],
+  lifecycleRules: [
+    {
+      id: 'delete-after-processing',
+      expiration: cdk.Duration.days(1),
+      enabled: true,
+    },
+  ],
+});
 
-resource "aws_s3_bucket_lifecycle_configuration" "uploads" {
-  bucket = aws_s3_bucket.uploads.id
-  
-  rule {
-    id     = "delete-old-uploads"
-    status = "Enabled"
-    
-    expiration {
-      days = 1  # Delete after processing
-    }
-  }
-}
-
-# Processed media bucket (public via CloudFront)
-resource "aws_s3_bucket" "media" {
-  bucket = "reportcrime-media-${var.environment}"
-}
-
-resource "aws_s3_bucket_public_access_block" "media" {
-  bucket = aws_s3_bucket.media.id
-  
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
+this.mediaBucket = new s3.Bucket(this, 'MediaBucket', {
+  bucketName: `${PROJECT_PREFIX}-media-${this.account}`,
+  encryption: s3.BucketEncryption.S3_MANAGED,
+  blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+  enforceSSL: true,
+  versioned: false,
+  removalPolicy: cdk.RemovalPolicy.DESTROY,
+  autoDeleteObjects: true,
+});
 ```
+
+Both buckets use S3-managed encryption, block all public access, and enforce SSL. Bucket names include the AWS account ID for global uniqueness.
 
 ### 2. CloudFront Distribution
-```hcl
-# infrastructure/cdn.tf
 
-resource "aws_cloudfront_origin_access_identity" "media" {
-  comment = "ReportCrime media OAI"
-}
+Uses Origin Access Control (OAC) via CDK's `S3BucketOrigin.withOriginAccessControl()`:
 
-resource "aws_s3_bucket_policy" "media" {
-  bucket = aws_s3_bucket.media.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = {
-        AWS = aws_cloudfront_origin_access_identity.media.iam_arn
-      }
-      Action   = "s3:GetObject"
-      Resource = "${aws_s3_bucket.media.arn}/*"
-    }]
-  })
-}
-
-resource "aws_cloudfront_distribution" "media" {
-  enabled         = true
-  is_ipv6_enabled = true
-  price_class     = "PriceClass_100"  # US, Canada, Europe
-  
-  origin {
-    domain_name = aws_s3_bucket.media.bucket_regional_domain_name
-    origin_id   = "S3-media"
-    
-    s3_origin_config {
-      origin_access_identity = aws_cloudfront_origin_access_identity.media.cloudfront_access_identity_path
-    }
-  }
-  
-  default_cache_behavior {
-    allowed_methods  = ["GET", "HEAD"]
-    cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "S3-media"
-    
-    forwarded_values {
-      query_string = false
-      cookies { forward = "none" }
-    }
-    
-    viewer_protocol_policy = "redirect-to-https"
-    min_ttl                = 0
-    default_ttl            = 86400    # 1 day
-    max_ttl                = 31536000 # 1 year
-    compress               = true
-  }
-  
-  restrictions {
-    geo_restriction { restriction_type = "none" }
-  }
-  
-  viewer_certificate {
-    cloudfront_default_certificate = true
-  }
-}
-
-output "cdn_domain" {
-  value = aws_cloudfront_distribution.media.domain_name
-}
+```typescript
+this.distribution = new cloudfront.Distribution(this, 'MediaCdn', {
+  comment: 'CrimeReport media CDN',
+  defaultBehavior: {
+    origin: origins.S3BucketOrigin.withOriginAccessControl(this.mediaBucket),
+    viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+    allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+    cachedMethods: cloudfront.CachedMethods.CACHE_GET_HEAD,
+    cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+    compress: true,
+  },
+  priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+  enabled: true,
+  httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
+});
 ```
 
-### 3. MediaConvert Setup
-```hcl
-# infrastructure/mediaconvert.tf
+### 3. Dead Letter Queue & Alarm
 
-# MediaConvert IAM Role
-resource "aws_iam_role" "mediaconvert" {
-  name = "reportcrime-mediaconvert"
-  
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = { Service = "mediaconvert.amazonaws.com" }
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
+```typescript
+this.deadLetterQueue = new sqs.Queue(this, 'MediaDlq', {
+  queueName: `${PROJECT_PREFIX}-media-dlq`,
+  retentionPeriod: cdk.Duration.days(14),
+  encryption: sqs.QueueEncryption.SQS_MANAGED,
+});
 
-resource "aws_iam_role_policy" "mediaconvert" {
-  name = "mediaconvert-s3-access"
-  role = aws_iam_role.mediaconvert.id
-  
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = ["s3:GetObject"]
-        Resource = "${aws_s3_bucket.uploads.arn}/*"
+new cloudwatch.Alarm(this, 'DlqAlarm', {
+  alarmName: `${PROJECT_PREFIX}-media-dlq-alarm`,
+  alarmDescription: 'Alert when media pipeline failures land in the DLQ',
+  metric: this.deadLetterQueue.metricApproximateNumberOfMessagesVisible({
+    period: cdk.Duration.minutes(5),
+  }),
+  threshold: 1,
+  evaluationPeriods: 1,
+  comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+  treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+});
+```
+
+### 4. Step Functions State Machine
+
+The pipeline is built in `buildPipelineDefinition()` with shared retry policies:
+
+```typescript
+const REKOGNITION_RETRY: sfn.RetryProps = {
+  errors: ['Rekognition.ThrottlingException', 'Rekognition.InternalServerError', 'States.TaskFailed'],
+  interval: cdk.Duration.seconds(5),
+  maxAttempts: 3,
+  backoffRate: 2,
+};
+
+const S3_RETRY: sfn.RetryProps = {
+  errors: ['States.TaskFailed'],
+  interval: cdk.Duration.seconds(3),
+  maxAttempts: 2,
+  backoffRate: 2,
+};
+```
+
+**Entry point** — routes by key prefix:
+
+```typescript
+return new sfn.Choice(this, 'DetermineFileType')
+  .when(sfn.Condition.stringMatches('$.key', 'images/*'), imagePath)
+  .otherwise(videoPath);
+```
+
+**Image path** (synchronous):
+
+```typescript
+// 1. Sync moderation check
+const detectImageLabels = new tasks.CallAwsService(this, 'DetectImageModeration', {
+  service: 'rekognition',
+  action: 'detectModerationLabels',
+  parameters: {
+    Image: {
+      S3Object: {
+        Bucket: sfn.JsonPath.stringAt('$.bucket'),
+        Name: sfn.JsonPath.stringAt('$.key'),
       },
-      {
-        Effect = "Allow"
-        Action = ["s3:PutObject"]
-        Resource = "${aws_s3_bucket.media.arn}/*"
-      }
-    ]
-  })
-}
+    },
+  },
+  iamResources: ['*'],
+  resultPath: '$.moderation',
+}).addRetry(REKOGNITION_RETRY);
 
-# MediaConvert Job Template
-resource "aws_media_convert_queue" "main" {
-  name = "reportcrime-transcode"
-}
+// 2. Check if flagged (confidence >= 80)
+const isImageFlagged = new sfn.Choice(this, 'IsImageFlagged')
+  .when(sfn.Condition.and(
+    sfn.Condition.isPresent('$.moderation.ModerationLabels[0]'),
+    sfn.Condition.numberGreaterThanEquals(
+      '$.moderation.ModerationLabels[0].Confidence',
+      MODERATION_CONFIDENCE_THRESHOLD,
+    ),
+  ), deleteFlagged)
+  .otherwise(copyToMedia);
+
+// 3. Safe images are copied to media bucket
+const copyToMedia = new tasks.CallAwsService(this, 'CopyImageToMedia', {
+  service: 's3',
+  action: 'copyObject',
+  parameters: {
+    Bucket: this.mediaBucket.bucketName,
+    CopySource: sfn.JsonPath.format('{}/{}',
+      sfn.JsonPath.stringAt('$.bucket'),
+      sfn.JsonPath.stringAt('$.key'),
+    ),
+    Key: sfn.JsonPath.stringAt('$.key'),
+  },
+  iamResources: [this.mediaBucket.arnForObjects('*')],
+  resultPath: sfn.JsonPath.DISCARD,
+}).addRetry(S3_RETRY);
 ```
 
-### 4. Step Functions Media Processing Pipeline
+**Video path** (asynchronous with polling):
 
-The media pipeline uses Step Functions to orchestrate content moderation and transcoding with separate paths for images and videos:
+```typescript
+// 1. Start async moderation
+const startVideoModeration = new tasks.CallAwsService(this, 'StartVideoModeration', {
+  service: 'rekognition',
+  action: 'startContentModeration',
+  parameters: {
+    Video: {
+      S3Object: {
+        Bucket: sfn.JsonPath.stringAt('$.bucket'),
+        Name: sfn.JsonPath.stringAt('$.key'),
+      },
+    },
+  },
+  iamResources: ['*'],
+  resultPath: '$.videoJob',
+}).addRetry(REKOGNITION_RETRY);
 
-1. **EventBridge Rule** - Catches S3 `ObjectCreated` events from the uploads bucket (prefixes `videos/` and `images/`) and triggers the state machine
-2. **File Type Routing** - `Choice` state routes by key prefix: `images/*` or `videos/*`
-3. **Image Path (sync)** - Rekognition `DetectModerationLabels` runs synchronously. Safe images are copied directly to the media bucket via S3 `copyObject`. No transcoding needed.
-4. **Video Path (async)** - Rekognition `StartContentModeration` starts async analysis. A polling loop (`Wait 20s` → `GetContentModeration` → check `JobStatus`) waits for completion. Safe videos go to Lambda for MediaConvert transcoding.
-5. **Flagged Content** - Both paths delete flagged content from S3 immediately.
-6. **Retries** - All Rekognition and S3 task states have retry policies with exponential backoff.
-7. **Error Handling** - Failed executions route to an SQS dead letter queue.
+// 2. Wait 20s then poll
+const waitForModeration = new sfn.Wait(this, 'WaitForModeration', {
+  time: sfn.WaitTime.duration(cdk.Duration.seconds(20)),
+});
 
-The CDK code in `infrastructure/aws/lib/media/media-stack.ts` defines the state machine, EventBridge rule, and all IAM permissions. The Lambda code lives in `backend/functions/transcode-trigger/index.ts`.
+const getVideoResults = new tasks.CallAwsService(this, 'GetVideoModerationResults', {
+  service: 'rekognition',
+  action: 'getContentModeration',
+  parameters: { JobId: sfn.JsonPath.stringAt('$.videoJob.JobId') },
+  iamResources: ['*'],
+  resultPath: '$.videoResults',
+}).addRetry(REKOGNITION_RETRY);
 
-### 5. Lambda MediaConvert Job Builder
+// 3. Check job status — loop if IN_PROGRESS, check moderation if SUCCEEDED
+const checkJobStatus = new sfn.Choice(this, 'CheckVideoJobStatus')
+  .when(sfn.Condition.stringEquals('$.videoResults.JobStatus', 'IN_PROGRESS'), waitForModeration)
+  .when(sfn.Condition.stringEquals('$.videoResults.JobStatus', 'SUCCEEDED'), isVideoFlagged)
+  .otherwise(deleteFlagged);
 
-The Lambda is no longer the orchestrator - it's a single step invoked by Step Functions. It receives `{ bucket, key }` as input, discovers the MediaConvert endpoint, builds the job settings (720p MP4, thumbnail, GIF), and submits the job via `CreateJob`.
+// 4. Safe videos → Lambda for MediaConvert transcoding
+const submitTranscode = new tasks.LambdaInvoke(this, 'SubmitTranscodeJob', {
+  lambdaFunction: this.transcodeLambda,
+  payload: sfn.TaskInput.fromObject({
+    bucket: sfn.JsonPath.stringAt('$.bucket'),
+    key: sfn.JsonPath.stringAt('$.key'),
+  }),
+  resultPath: '$.transcode',
+});
+```
+
+### 5. EventBridge Rule
+
+```typescript
+const uploadRule = new events.Rule(this, 'UploadTriggerRule', {
+  ruleName: `${PROJECT_PREFIX}-upload-trigger`,
+  description: 'Triggers media pipeline when media is uploaded to S3',
+  eventPattern: {
+    source: ['aws.s3'],
+    detailType: ['Object Created'],
+    detail: {
+      bucket: { name: [this.uploadsBucket.bucketName] },
+      object: { key: [{ prefix: 'videos/' }, { prefix: 'images/' }] },
+    },
+  },
+});
+
+uploadRule.addTarget(new targets.SfnStateMachine(this.stateMachine, {
+  input: events.RuleTargetInput.fromObject({
+    bucket: events.EventField.fromPath('$.detail.bucket.name'),
+    key: events.EventField.fromPath('$.detail.object.key'),
+  }),
+  deadLetterQueue: this.deadLetterQueue,
+}));
+```
+
+### 6. Transcode Lambda
+
+The Lambda discovers the MediaConvert endpoint (cached across invocations), builds job settings, and submits:
+
+```typescript
+// backend/functions/transcode-trigger/index.ts
+
+export const handler = async (event: TranscodeInput): Promise<TranscodeOutput> => {
+  const { bucket, key } = event;
+  const inputUri = `s3://${bucket}/${key}`;
+  const baseName = key.split('/').pop()?.replace(/\.[^.]+$/, '') ?? 'output';
+  const outputPrefix = `videos/${baseName}`;
+
+  const endpoint = await getEndpoint();
+  const client = new MediaConvertClient({ endpoint });
+  const jobSettings = buildJobSettings(inputUri, outputPrefix);
+
+  const result = await client.send(
+    new CreateJobCommand({
+      Role: MEDIACONVERT_ROLE,
+      Settings: jobSettings,
+      StatusUpdateInterval: 'SECONDS_60',
+      Tags: { Project: 'CrimeReport', Source: key },
+    }),
+  );
+
+  return { jobId: result.Job?.Id ?? 'unknown', outputPrefix };
+};
+```
+
+MediaConvert job outputs:
+- **720p MP4** — H.264 QVBR quality 7, AAC 128kbps audio
+- **Thumbnail** — 480×480 single frame capture
+- **GIF Preview** — 320×320, 3fps, max 9 frames
 
 ## Media Flow
 ```
@@ -225,21 +348,48 @@ Step Functions State Machine
                                S3 Media Bucket → CloudFront → App
 ```
 
-## Deliverable Checklist
-- [ ] Uploads bucket created with CORS and EventBridge notifications
-- [ ] Media bucket created (private)
-- [ ] CloudFront distribution serving media bucket
-- [ ] MediaConvert role created
-- [ ] Step Functions state machine deployed with image/video routing, Rekognition, retries
-- [ ] EventBridge rule triggers state machine on S3 upload (images/ and videos/ prefixes)
-- [ ] Lambda for MediaConvert job building deployed (videos only)
-- [ ] SQS dead letter queue for failed executions
-- [ ] Test: upload image → sync Rekognition check → S3 copy to media bucket
-- [ ] Test: upload video → async Rekognition check → MediaConvert transcode
-- [ ] Test: flagged content deleted, never reaches media bucket
-- [ ] Test: CDN serves processed media
+## Testing
 
-## Files
-1. `infrastructure/aws/lib/media/media-stack.ts` - S3 buckets, CloudFront, Step Functions, EventBridge, Lambda, DLQ
-2. `infrastructure/aws/test/media/media-stack.test.ts` - Unit tests
-3. `backend/functions/transcode-trigger/index.ts` - MediaConvert job builder Lambda code
+CDK assertion tests in `infrastructure/aws/test/media/media-stack.test.ts` (23 tests):
+
+**S3 Buckets:**
+- Uploads bucket with CORS (PUT, POST) and lifecycle (1-day expiration)
+- Uploads bucket has EventBridge notifications enabled
+- Media bucket created with encryption
+- Uploads bucket does NOT have Lambda notifications (uses EventBridge)
+
+**CloudFront:**
+- Distribution with HTTPS redirect, compression, HTTP/2+3, `PriceClass_100`
+
+**SQS DLQ:**
+- Dead letter queue with 14-day retention
+- CloudWatch alarm on DLQ message visibility
+
+**MediaConvert:**
+- IAM role with `mediaconvert.amazonaws.com` trust
+
+**Lambda:**
+- Node.js 20, ARM64, 256 MB, 30s timeout
+- Has MediaConvert permissions (`CreateJob`, `DescribeEndpoints`)
+- Has `MEDIACONVERT_ROLE_ARN` and `OUTPUT_BUCKET` environment variables
+
+**Step Functions:**
+- State machine created with X-Ray tracing
+- State machine role has Rekognition image moderation permission
+- State machine role has Rekognition video moderation permissions (start + get)
+- State machine role has S3 read on uploads, write on media, delete, and copy permissions
+
+**EventBridge:**
+- Rule matches `Object Created` events with `videos/` and `images/` prefixes
+- Rule targets Step Functions with DLQ configured
+
+## Notes
+
+- **Deviation from original plan**: The original plan used Terraform. The actual implementation uses a single CDK stack with all media resources.
+- **OAC instead of OAI**: CloudFront uses the newer Origin Access Control (`S3BucketOrigin.withOriginAccessControl`) instead of Origin Access Identity.
+- **HTTP/2+3**: CloudFront is configured with `HTTP2_AND_3` for better performance on modern clients.
+- **Moderation confidence threshold** is 80% (configurable in `constants.ts`).
+- **No S3 event notification to Lambda**: The pipeline uses EventBridge → Step Functions → Lambda, not direct S3→Lambda invocation.
+- **State machine timeout** is 30 minutes to accommodate long video moderation jobs.
+- **X-Ray tracing** is enabled on the state machine for debugging pipeline executions.
+- **Account ID in bucket names** ensures global uniqueness without a random suffix.

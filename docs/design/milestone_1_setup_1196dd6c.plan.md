@@ -1,152 +1,129 @@
----
-name: Milestone 1 Setup
-overview: Set up the Flutter project structure with proper folder organization, dependencies, and a working 4-tab navigation shell with placeholder screens.
-todos:
-  - id: m1-deps
-    content: Update pubspec.yaml with all dependencies
-    status: pending
-  - id: m1-structure
-    content: Create folder structure and placeholder files
-    status: pending
-  - id: m1-theme
-    content: Implement dark theme configuration
-    status: pending
-  - id: m1-shell
-    content: Build AppShell with bottom navigation + IndexedStack
-    status: pending
-  - id: m1-screens
-    content: Create 4 placeholder screens
-    status: pending
-  - id: m1-verify
-    content: Run app and verify tabs work correctly
-    status: pending
----
-
 # Milestone 1: Project Setup & Structure
 
+## Status
+Completed
+
 ## Goal
-Get the ReportCrime app running with a clean architecture, all dependencies installed, and 4-tab bottom navigation showing placeholder screens.
+Get the CrImEreport app running with a clean feature-based architecture, all dependencies installed, a dark theme system, and a 4-tab floating bottom navigation showing the Feed, Map, Report, and Settings screens.
 
-## Working File
-[lib/main.dart](lib/main.dart) - Currently contains default Flutter counter app, will be replaced entirely.
+## Dependencies
+None — this is the foundational milestone.
 
-## Implementation Steps
+## What Was Built
+A fully structured Flutter project with a feature-based folder layout, comprehensive dark theme system (centralized colors, typography, spacing), Riverpod-based state management, and a floating navigation bar using `google_nav_bar`. The app shell uses `IndexedStack` for tab state preservation and a `Stack`-based layout with a floating nav bar positioned over content.
 
-### 1. Update Dependencies
-Add to [pubspec.yaml](pubspec.yaml):
+## Key Files
 
-```yaml
-dependencies:
-  flutter:
-    sdk: flutter
-  # State Management
-  flutter_riverpod: ^2.4.9
-  riverpod_annotation: ^2.3.3
-  
-  # Mapping
-  mapbox_gl: ^0.16.0
-  
-  # Media
-  video_player: ^2.8.2
-  camera: ^0.10.5+9
-  image_picker: ^1.0.7
-  
-  # Location
-  geolocator: ^11.0.0
-  permission_handler: ^11.3.0
-  
-  # Networking (prep for backend)
-  dio: ^5.4.0
-  socket_io_client: ^2.0.3+1
-  
-  # Storage
-  shared_preferences: ^2.2.2
-  flutter_secure_storage: ^9.0.0
-  
-  # UI Helpers
-  cached_network_image: ^3.3.1
-  shimmer: ^3.0.0
-  
-  # Utils
-  uuid: ^4.3.3
-  intl: ^0.19.0
+| File | Description |
+|------|-------------|
+| `apps/mobile/pubspec.yaml` | Dependencies and project configuration |
+| `apps/mobile/lib/main.dart` | App entry point with orientation lock and `.env` loading |
+| `apps/mobile/lib/app.dart` | `MaterialApp` wrapper with dark theme and system chrome |
+| `apps/mobile/lib/shared/widgets/app_shell.dart` | Navigation shell with `IndexedStack` + floating nav bar |
+| `apps/mobile/lib/shared/widgets/floating_nav_bar.dart` | Custom floating nav bar using `google_nav_bar` |
+| `apps/mobile/lib/core/theme/app_theme.dart` | Full Material 3 dark theme configuration |
+| `apps/mobile/lib/core/theme/colors.dart` | Centralized color palette (brand, crime types, overlays) |
+| `apps/mobile/lib/core/theme/typography.dart` | Text styles with video overlay shadows |
+| `apps/mobile/lib/core/theme/spacing.dart` | Spacing scale, radii, icon sizes, component sizes |
+| `apps/mobile/lib/core/theme/theme.dart` | Barrel export for all theme files |
+| `apps/mobile/lib/core/constants/app_constants.dart` | App-wide constants (API, map, video feed, animations) |
+| `apps/mobile/lib/core/utils/responsive.dart` | Responsive layout utilities |
+| `apps/mobile/lib/features/feed/presentation/feed_screen.dart` | Feed tab screen |
+| `apps/mobile/lib/features/map/presentation/map_screen.dart` | Map tab screen |
+| `apps/mobile/lib/features/submit/presentation/submit_screen.dart` | Report submission tab |
+| `apps/mobile/lib/features/settings/presentation/settings_screen.dart` | Settings tab screen |
 
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^3.0.0
-  riverpod_generator: ^2.3.9
-  build_runner: ^2.4.8
-```
+## Implementation Details
 
-### 2. Create Folder Structure
+### Entry Point
 
-```
-lib/
-├── main.dart                 # App entry point
-├── app.dart                  # MaterialApp + ProviderScope
-├── core/
-│   ├── theme/
-│   │   └── app_theme.dart    # Colors, typography, ThemeData
-│   └── constants/
-│       └── app_constants.dart
-├── features/
-│   ├── feed/
-│   │   └── presentation/
-│   │       └── feed_screen.dart      # Placeholder
-│   ├── map/
-│   │   └── presentation/
-│   │       └── map_screen.dart       # Placeholder
-│   ├── submit/
-│   │   └── presentation/
-│   │       └── submit_screen.dart    # Placeholder
-│   └── settings/
-│       └── presentation/
-│           └── settings_screen.dart  # Placeholder
-├── shared/
-│   └── widgets/
-│       └── app_shell.dart    # Bottom nav + IndexedStack
-└── router/
-    └── app_router.dart       # Navigation config (prep for later)
-```
-
-### 3. Implement App Shell with Bottom Navigation
-
-The main navigation structure using `IndexedStack` for preserving state:
+`main.dart` initializes Flutter bindings, locks orientation to portrait, loads environment variables from `.env`, and wraps the app in Riverpod's `ProviderScope`:
 
 ```dart
-// lib/shared/widgets/app_shell.dart
-class AppShell extends ConsumerStatefulWidget {
-  @override
-  _AppShellState createState() => _AppShellState();
-}
+// apps/mobile/lib/main.dart
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
+  await dotenv.load(fileName: '.env');
+
+  runApp(const ProviderScope(child: CrimeReportApp()));
+}
+```
+
+### App Root
+
+`app.dart` configures system UI overlays for the dark theme and creates a `MaterialApp` pointing to `AppShell` as the home screen:
+
+```dart
+// apps/mobile/lib/app.dart
+class CrimeReportApp extends StatelessWidget {
+  const CrimeReportApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: AppColors.background,
+        systemNavigationBarIconBrightness: Brightness.light,
+      ),
+    );
+
+    return MaterialApp(
+      title: 'CrImEreport',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
+      home: const AppShell(),
+    );
+  }
+}
+```
+
+### Navigation Shell
+
+`AppShell` is a `ConsumerStatefulWidget` that uses Riverpod's `appTabIndexProvider` for tab state. It renders screens via `IndexedStack` and overlays the `FloatingNavBar` on top via a `Stack`:
+
+```dart
+// apps/mobile/lib/shared/widgets/app_shell.dart
 class _AppShellState extends ConsumerState<AppShell> {
-  int _currentIndex = 0;
-  
-  final _screens = [
+  final List<Widget> _screens = const [
     FeedScreen(),
     MapScreen(),
     SubmitScreen(),
     SettingsScreen(),
   ];
 
+  static const List<FloatingNavBarItem> _navItems = [
+    FloatingNavBarItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'Feed'),
+    FloatingNavBarItem(icon: Icons.map_outlined, activeIcon: Icons.map, label: 'Map'),
+    FloatingNavBarItem(icon: Icons.add_circle_outline, activeIcon: Icons.add_circle, label: 'Report'),
+    FloatingNavBarItem(icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
+  ];
+
+  void _onTabChanged(int index) {
+    ref.read(appTabIndexProvider.notifier).state = index;
+  }
+
   @override
   Widget build(BuildContext context) {
+    final currentIndex = ref.watch(appTabIndexProvider);
+
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) => setState(() => _currentIndex = index),
-        type: BottomNavigationBarType.fixed,
-        items: [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Feed'),
-          BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Map'),
-          BottomNavigationBarItem(icon: Icon(Icons.add_circle), label: 'Report'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          IndexedStack(index: currentIndex, children: _screens),
+          FloatingNavBar(
+            currentIndex: currentIndex,
+            onTap: _onTabChanged,
+            items: _navItems,
+          ),
         ],
       ),
     );
@@ -154,63 +131,131 @@ class _AppShellState extends ConsumerState<AppShell> {
 }
 ```
 
-### 4. Create Placeholder Screens
+### Floating Navigation Bar
 
-Each screen will be a simple centered text for now:
+Instead of `BottomNavigationBar`, the app uses a custom floating bar built with `google_nav_bar`. It's positioned absolutely at the bottom with responsive margins and safe area insets. It has a solid dark background with a subtle glass border and shadow:
 
 ```dart
-// Example: lib/features/feed/presentation/feed_screen.dart
-class FeedScreen extends StatelessWidget {
+// apps/mobile/lib/shared/widgets/floating_nav_bar.dart
+class FloatingNavBar extends StatelessWidget {
+  // ...
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: Text('Feed Screen', style: Theme.of(context).textTheme.headlineMedium),
+    final bottomSafeArea = Responsive.bottomSafeArea(context);
+    final effectiveBottomMargin = bottomMargin + bottomSafeArea;
+
+    return Positioned(
+      left: horizontalMargin,
+      right: horizontalMargin,
+      bottom: effectiveBottomMargin,
+      child: Container(
+        height: barHeight,
+        decoration: BoxDecoration(
+          color: AppColors.navBarBackground,
+          borderRadius: borderRadius,
+          border: Border.all(color: AppColors.glassBorder, width: 0.5),
+          boxShadow: [BoxShadow(color: AppColors.shadowLight, blurRadius: 20, offset: const Offset(0, 8), spreadRadius: -5)],
+        ),
+        child: ClipRRect(
+          borderRadius: borderRadius,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: AppSpacing.sm + AppSpacing.xs, vertical: AppSpacing.sm),
+            child: GNav(
+              selectedIndex: currentIndex,
+              onTabChange: onTap,
+              gap: AppSpacing.sm,
+              activeColor: AppColors.primary,
+              // ...
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 ```
 
-### 5. Set Up Theme
+### Theme System
 
-Dark theme with accent colors for a crime reporting app:
+The theme is split across four files exported via a barrel (`theme.dart`):
 
-```dart
-// lib/core/theme/app_theme.dart
-class AppTheme {
-  static ThemeData darkTheme = ThemeData(
-    brightness: Brightness.dark,
-    primaryColor: Color(0xFFE53935),  // Red accent
-    scaffoldBackgroundColor: Color(0xFF121212),
-    // ... more styling
-  );
-}
+- **`colors.dart`** — Centralized `AppColors` with brand (`primary: #00897B`), accent red (`#E53935`), 7 crime-type colors, overlay opacity variants (`overlayLight` through `overlayHeavy`), and glass/shadow colors.
+- **`typography.dart`** — `AppTypography` with display/headline/title/body/label styles, a `videoOverlayShadow` for text over video.
+- **`spacing.dart`** — `AppSpacing` scale from `xxs` (2) to `xxxl` (64), border radii, icon sizes, and nav bar dimensions.
+- **`app_theme.dart`** — Full Material 3 `ThemeData` assembling all of the above into card themes, button themes, input decoration, dialog/sheet themes, and more.
+
+### Dependencies
+
+The actual `pubspec.yaml` includes these notable additions over the original plan:
+
+| Category | Package | Notes |
+|----------|---------|-------|
+| Mapping | `mapbox_maps_flutter: ^2.1.0` | Replaced `mapbox_gl` from original plan |
+| Environment | `flutter_dotenv: ^5.1.0` | Added for `.env` config |
+| Navigation | `google_nav_bar: ^5.0.6` | For the floating nav bar |
+| Image Processing | `flutter_cache_manager: ^3.4.1`, `image: ^4.5.4` | For map marker rendering |
+| UI | `cupertino_icons: ^1.0.8` | Standard iOS icons |
+
+SDK constraint: `^3.10.8` (Dart 3.10+).
+
+### Folder Structure (Actual)
+
+```
+apps/mobile/lib/
+├── main.dart
+├── app.dart
+├── core/
+│   ├── constants/
+│   │   ├── app_constants.dart
+│   │   └── enums.dart
+│   ├── theme/
+│   │   ├── app_theme.dart
+│   │   ├── colors.dart
+│   │   ├── spacing.dart
+│   │   ├── typography.dart
+│   │   └── theme.dart          (barrel export)
+│   └── utils/
+│       ├── formatters.dart
+│       ├── geo_utils.dart
+│       ├── responsive.dart
+│       └── utils.dart
+├── features/
+│   ├── feed/
+│   │   ├── data/models/
+│   │   ├── presentation/
+│   │   └── providers/
+│   ├── map/
+│   │   ├── presentation/
+│   │   ├── providers/
+│   │   └── services/
+│   ├── submit/
+│   │   └── presentation/
+│   └── settings/
+│       ├── presentation/
+│       └── providers/
+└── shared/
+    ├── data/
+    │   ├── mock_data_service.dart
+    │   └── sample_data.dart
+    └── widgets/
+        ├── app_shell.dart
+        ├── floating_nav_bar.dart
+        ├── loading_placeholder.dart
+        ├── permission_placeholder.dart
+        ├── responsive_layout.dart
+        └── surface_card.dart
 ```
 
-## Deliverable Checklist
+## Testing
+No automated tests were added in this milestone. Verification was done manually:
+- App compiles and runs
+- 4 tabs visible and tappable
+- State preserved between tabs via `IndexedStack`
+- Floating nav bar renders above content with safe area padding
 
-- [ ] App compiles and runs on iOS Simulator
-- [ ] 4 tabs visible in bottom navigation
-- [ ] Can tap between tabs, each shows placeholder text
-- [ ] State preserved when switching tabs (IndexedStack working)
-- [ ] Clean folder structure created
-- [ ] All dependencies resolve correctly
+## Notes
 
-## Files to Create (11 total)
-
-1. `lib/main.dart` - Entry point
-2. `lib/app.dart` - MaterialApp wrapper
-3. `lib/core/theme/app_theme.dart` - Theme config
-4. `lib/core/constants/app_constants.dart` - App constants
-5. `lib/features/feed/presentation/feed_screen.dart` - Feed placeholder
-6. `lib/features/map/presentation/map_screen.dart` - Map placeholder
-7. `lib/features/submit/presentation/submit_screen.dart` - Submit placeholder
-8. `lib/features/settings/presentation/settings_screen.dart` - Settings placeholder
-9. `lib/shared/widgets/app_shell.dart` - Navigation shell
-10. `lib/router/app_router.dart` - Router placeholder
-11. `pubspec.yaml` - Updated dependencies
-
----
-
-Once approved, switch to **agent mode** and I'll implement this milestone.
+- **Deviation: Navigation approach** — The original plan used `BottomNavigationBar`. The implementation instead uses a floating `google_nav_bar` overlay positioned via `Positioned` in a `Stack`, giving a more modern TikTok-like appearance where video content extends behind the nav bar.
+- **Deviation: Tab state management** — Instead of local `setState` for the tab index, Riverpod's `appTabIndexProvider` is used so other widgets (like `FeedVideoItem`) can react to tab changes (e.g., pause video when leaving the feed tab).
+- **Deviation: Theme complexity** — The plan called for a simple `AppTheme` class. The implementation splits the theme into 4 files (colors, typography, spacing, app_theme) with a barrel export, providing a much more comprehensive design system.
+- **Deviation: Dependencies** — `mapbox_gl` was replaced with `mapbox_maps_flutter`, `flutter_dotenv` was added for environment config, and `google_nav_bar` was added for the nav bar.

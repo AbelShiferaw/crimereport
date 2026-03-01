@@ -1,355 +1,433 @@
 # Milestone 22: Media Upload Flow
 
+## Status
+Completed
+
 ## Goal
-Implement presigned URL upload flow for videos/images from mobile app to S3.
+Implement a two-phase presigned-URL upload flow for images and videos attached to reports, with S3 verification, polling-based status tracking, and CDN URL construction.
 
 ## Dependencies
-Requires **Milestone 16** (media infrastructure) and **Milestone 20** (report endpoints).
+Requires **Milestone 16** (S3 buckets, CloudFront CDN) and **Milestone 20** (report CRUD endpoints).
 
-## Implementation
+## What Was Built
+- **POST /reports/:id/upload** — Phase 1: generates a presigned S3 PUT URL and creates a `pending` media record
+- **POST /reports/:id/upload/complete** — Phase 2: verifies the object landed in S3, transitions media to `processing`
+- **GET /reports/:id/media/status** — Polling endpoint that checks both S3 buckets, updates CDN URLs when processing completes, and derives aggregate report status
+- `s3.ts` utility module wrapping AWS SDK v3 for presigned URLs, `HeadObject` checks, CDN URL building, and media key generation
+- Zod validation with `file_type`/`content_type` cross-field refinement
+- Edge-case guards: ownership check, removed-report check, flagged-device check, media-per-report limit (5), report status gating, idempotent completion
 
-### 1. Upload Routes
-```javascript
-// backend/src/routes/v1/uploads.js
+## Key Files
+| File | Description |
+|------|-------------|
+| `backend/api/src/routes/reports.ts` | Upload, complete, and media-status routes (lines 135–297) |
+| `backend/api/src/lib/s3.ts` | S3 helpers: `generateUploadUrl`, `objectExists`, `buildCdnUrl`, `buildMediaKey` |
+| `backend/api/src/models/media.ts` | Media queries: find, create, `updateUrls`, `updateStatus`, delete |
+| `backend/api/src/models/types.ts` | `Media`, `CreateMediaInput` interfaces |
+| `backend/api/src/validators/media.ts` | Zod schemas for upload request and upload-complete |
+| `backend/api/src/config.ts` | AWS config: region, bucket names, CDN domain |
+| `backend/api/migrations/1709200000000_add-media-key.sql` | Adds `media_key` + `status` columns with indexes |
+| `backend/api/src/__tests__/routes/media-upload.test.ts` | Route-level integration tests (supertest) |
+| `backend/api/src/__tests__/models/media.test.ts` | Unit tests for media model |
 
-const express = require('express');
-const uploadController = require('../../controllers/uploadController');
-const { validateDevice } = require('../../middleware/validateDevice');
-const { validate } = require('../../middleware/validate');
-const { uploadSchemas } = require('../../validators/uploadSchemas');
+## Implementation Details
 
-const router = express.Router();
+### Upload Architecture
 
-router.use(validateDevice);
+The flow is report-scoped — all three endpoints are nested under `/api/v1/reports/:id`. The client never uploads through the API server; it receives a presigned URL and PUTs directly to S3.
 
-// POST /api/v1/uploads/presigned-url
-router.post('/presigned-url',
-  validate(uploadSchemas.presignedUrl, 'body'),
-  uploadController.getPresignedUrl
-);
-
-// POST /api/v1/uploads/complete
-router.post('/complete',
-  validate(uploadSchemas.complete, 'body'),
-  uploadController.completeUpload
-);
-
-module.exports = router;
+```
+Mobile App                   API Server                     AWS S3
+    │                            │                             │
+    │ POST /reports/:id/upload   │                             │
+    │ ──────────────────────────>│                             │
+    │                            │  create media record        │
+    │                            │  generate presigned URL     │
+    │  { upload_url, media_key } │                             │
+    │ <──────────────────────────│                             │
+    │                            │                             │
+    │  PUT upload_url (binary)   │                             │
+    │ ─────────────────────────────────────────────────────────>
+    │                            │                             │
+    │ POST /:id/upload/complete  │                             │
+    │ ──────────────────────────>│  HeadObject (verify upload) │
+    │                            │ ───────────────────────────>│
+    │   { status: processing }   │                             │
+    │ <──────────────────────────│                             │
+    │                            │                             │
+    │ GET /:id/media/status      │  HeadObject (check both     │
+    │ ──────────────────────────>│  buckets, build CDN URLs)   │
+    │   { status, media[] }      │ ───────────────────────────>│
+    │ <──────────────────────────│                             │
 ```
 
-### 2. Upload Controller
-```javascript
-// backend/src/controllers/uploadController.js
+### Content-Type Mapping
 
-const uploadService = require('../services/uploadService');
+A lookup table maps allowed MIME types to file extensions. Only types in this map pass Zod validation:
 
-async function getPresignedUrl(req, res) {
-  const { filename, contentType, fileSize } = req.body;
-  
-  const result = await uploadService.generatePresignedUrl(
-    filename,
-    contentType,
-    fileSize,
-    req.deviceId
-  );
-  
-  res.json({
-    data: {
-      uploadUrl: result.uploadUrl,
-      uploadId: result.uploadId,
-      key: result.key,
-      expiresIn: result.expiresIn,
-    },
-  });
-}
-
-async function completeUpload(req, res) {
-  const { uploadId, reportId } = req.body;
-  
-  const media = await uploadService.completeUpload(
-    uploadId,
-    reportId,
-    req.deviceId
-  );
-  
-  res.json({ data: media });
-}
-
-module.exports = {
-  getPresignedUrl,
-  completeUpload,
+```typescript
+// backend/api/src/routes/reports.ts  (lines 139–146)
+const CONTENT_TYPE_TO_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
 };
 ```
 
-### 3. Upload Service
-```javascript
-// backend/src/services/uploadService.js
+### Phase 1: POST /reports/:id/upload — Presigned URL Generation
 
-const { S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { v4: uuidv4 } = require('uuid');
-const config = require('../config');
-const mediaRepository = require('../repositories/mediaRepository');
-const { ValidationError, NotFoundError } = require('../utils/errors');
-const { query } = require('../config/database');
+Performs five checks before generating the URL:
 
-const s3Client = new S3Client({ region: config.aws.region });
+1. Report exists
+2. Report owner matches `device_id`
+3. Report is not `removed`
+4. Report status allows uploads (`pending`, `uploading`, or `failed`)
+5. Device is not flagged
+6. Media count has not reached `MAX_MEDIA_PER_REPORT` (5)
 
-// Store pending uploads
-const pendingUploads = new Map(); // In production, use Redis
+Then generates a structured media key, creates a presigned PUT URL, inserts a `pending` media record, and transitions the report to `uploading`:
 
-async function generatePresignedUrl(filename, contentType, fileSize, deviceId) {
-  // Validate file type
-  const allowedTypes = ['video/mp4', 'video/quicktime', 'image/jpeg', 'image/png'];
-  if (!allowedTypes.includes(contentType)) {
-    throw new ValidationError(`File type ${contentType} not allowed`);
-  }
-  
-  // Validate file size (100MB max for video, 10MB for image)
-  const isVideo = contentType.startsWith('video/');
-  const maxSize = isVideo ? 100 * 1024 * 1024 : 10 * 1024 * 1024;
-  if (fileSize > maxSize) {
-    throw new ValidationError(`File too large. Max: ${maxSize / 1024 / 1024}MB`);
-  }
-  
-  // Generate unique key
-  const uploadId = uuidv4();
-  const ext = filename.split('.').pop();
-  const folder = isVideo ? 'videos' : 'images';
-  const key = `${folder}/${uploadId}.${ext}`;
-  
-  // Generate presigned URL
+```typescript
+// backend/api/src/routes/reports.ts  (lines 150–201)
+router.post(
+  '/:id/upload',
+  validate(uploadRequestSchema),
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { device_id, file_type, content_type } = req.body;
+
+    const report = await reportModel.findById(id);
+    if (!report) throw HttpError.notFound('Report not found');
+
+    if (report.device_id !== device_id)
+      throw HttpError.forbidden('Not authorized to upload to this report');
+
+    if (report.status === 'removed')
+      throw HttpError.forbidden('Cannot upload to a removed report');
+
+    if (!UPLOAD_ALLOWED_STATUSES.has(report.status))
+      throw HttpError.conflict('Report already has media being processed or active');
+
+    const device = await deviceActivity.getOrCreate(device_id);
+    if (device.flagged) throw HttpError.forbidden('This device has been flagged for abuse');
+
+    const existingMedia = await mediaModel.findByReportId(id);
+    if (existingMedia.length >= MAX_MEDIA_PER_REPORT)
+      throw HttpError.badRequest(`Maximum of ${MAX_MEDIA_PER_REPORT} media items per report`);
+
+    const ext = CONTENT_TYPE_TO_EXT[content_type] ?? 'bin';
+    const fileId = randomUUID();
+    const mediaKey = s3.buildMediaKey(file_type, id, fileId, ext);
+
+    const { url: uploadUrl, expiresIn } = await s3.generateUploadUrl(mediaKey, content_type);
+
+    await mediaModel.create({
+      report_id: id,
+      type: file_type,
+      url: '',
+      media_key: mediaKey,
+    });
+
+    await reportModel.updateStatus(id, 'uploading');
+
+    res.status(201).json({ upload_url: uploadUrl, media_key: mediaKey, expires_in: expiresIn });
+  },
+);
+```
+
+### S3 Utility Module
+
+Wraps AWS SDK v3 with four focused functions:
+
+```typescript
+// backend/api/src/lib/s3.ts
+import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { config } from '../config';
+
+const PRESIGNED_URL_EXPIRES_IN = 15 * 60; // 15 minutes
+
+const s3 = new S3Client({ region: config.aws.region });
+
+export async function generateUploadUrl(
+  key: string,
+  contentType: string,
+): Promise<{ url: string; expiresIn: number }> {
   const command = new PutObjectCommand({
-    Bucket: config.aws.s3.uploadsBucket,
+    Bucket: config.aws.s3UploadsBucket,
     Key: key,
     ContentType: contentType,
-    ContentLength: fileSize,
-    Metadata: {
-      'device-id': deviceId,
-      'upload-id': uploadId,
-    },
   });
-  
-  const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-  
-  // Track pending upload
-  pendingUploads.set(uploadId, {
-    key,
-    deviceId,
-    contentType,
-    fileSize,
-    isVideo,
-    createdAt: new Date(),
-  });
-  
-  // Auto-cleanup after 1 hour
-  setTimeout(() => pendingUploads.delete(uploadId), 3600 * 1000);
-  
-  return {
-    uploadUrl,
-    uploadId,
-    key,
-    expiresIn: 3600,
-  };
+
+  const url = await getSignedUrl(s3, command, { expiresIn: PRESIGNED_URL_EXPIRES_IN });
+  return { url, expiresIn: PRESIGNED_URL_EXPIRES_IN };
 }
 
-async function completeUpload(uploadId, reportId, deviceId) {
-  // Verify pending upload
-  const pending = pendingUploads.get(uploadId);
-  if (!pending) {
-    throw new NotFoundError('Upload not found or expired');
-  }
-  
-  if (pending.deviceId !== deviceId) {
-    throw new ValidationError('Upload does not belong to this device');
-  }
-  
-  // Verify file exists in S3
+export async function objectExists(bucket: string, key: string): Promise<boolean> {
   try {
-    await s3Client.send(new HeadObjectCommand({
-      Bucket: config.aws.s3.uploadsBucket,
-      Key: pending.key,
-    }));
-  } catch (error) {
-    throw new ValidationError('File not found in storage. Please upload again.');
-  }
-  
-  // For videos, the MediaConvert Lambda will process and create the media record
-  // For images, we create the media record directly
-  
-  if (pending.isVideo) {
-    // Video will be processed by MediaConvert
-    // Store pending media reference
-    const media = await mediaRepository.create({
-      report_id: reportId,
-      type: 'video',
-      url: '', // Will be updated by MediaConvert callback
-      thumbnail_url: '',
-      status: 'processing',
-      original_key: pending.key,
-    });
-    
-    pendingUploads.delete(uploadId);
-    
-    return {
-      ...media,
-      status: 'processing',
-      message: 'Video is being processed. It will appear shortly.',
-    };
-  } else {
-    // Image - copy directly to media bucket
-    const mediaKey = pending.key.replace('images/', 'processed/images/');
-    
-    // In production, you might want to resize/optimize images here
-    const mediaUrl = `https://${config.aws.cdnDomain}/${mediaKey}`;
-    
-    const media = await mediaRepository.create({
-      report_id: reportId,
-      type: 'image',
-      url: mediaUrl,
-      thumbnail_url: mediaUrl,
-      status: 'ready',
-    });
-    
-    pendingUploads.delete(uploadId);
-    
-    return media;
+    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+    return true;
+  } catch (err: any) {
+    if (err.name === 'NotFound' || err.$metadata?.httpStatusCode === 404) {
+      return false;
+    }
+    throw err;
   }
 }
 
-// Webhook endpoint for MediaConvert completion
-async function handleMediaConvertComplete(event) {
-  const { outputKey, thumbnailKey, originalKey, status } = event;
-  
-  if (status !== 'COMPLETE') {
-    // Handle failure
-    await query(
-      `UPDATE media SET status = 'failed' WHERE original_key = $1`,
-      [originalKey]
-    );
+export function buildCdnUrl(key: string): string {
+  const domain = config.aws.cdnDomain;
+  if (!domain) return '';
+  return `https://${domain}/${key}`;
+}
+
+export function buildMediaKey(
+  fileType: 'image' | 'video',
+  reportId: string,
+  fileId: string,
+  ext: string,
+): string {
+  const prefix = fileType === 'image' ? 'images' : 'videos';
+  return `${prefix}/${reportId}/${fileId}.${ext}`;
+}
+```
+
+### Phase 2: POST /reports/:id/upload/complete — S3 Verification
+
+After the client finishes the direct S3 PUT, it calls this endpoint. The handler:
+
+1. Validates report existence and ownership
+2. Looks up the media record by `media_key`
+3. **Idempotency**: if the media is already `processing` or `active`, returns the current status without re-verifying
+4. Calls `s3.objectExists` on the uploads bucket to confirm the file arrived
+5. Transitions media to `processing` and report to `processing`
+
+```typescript
+// backend/api/src/routes/reports.ts  (lines 203–239)
+router.post(
+  '/:id/upload/complete',
+  validate(uploadCompleteSchema),
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { device_id, media_key } = req.body;
+
+    const report = await reportModel.findById(id);
+    if (!report) throw HttpError.notFound('Report not found');
+
+    if (report.device_id !== device_id)
+      throw HttpError.forbidden('Not authorized for this report');
+
+    const media = await mediaModel.findByMediaKey(media_key);
+    if (!media || media.report_id !== id)
+      throw HttpError.notFound('Media not found for this report');
+
+    if (media.status === 'processing' || media.status === 'active') {
+      res.json({ status: media.status });
+      return;
+    }
+
+    const exists = await s3.objectExists(config.aws.s3UploadsBucket, media_key);
+    if (!exists)
+      throw HttpError.badRequest('File not found in uploads bucket. Upload may have failed.');
+
+    await mediaModel.updateStatus(media_key, 'processing');
+    await reportModel.updateStatus(id, 'processing');
+
+    res.json({ status: 'processing' });
+  },
+);
+```
+
+### Polling: GET /reports/:id/media/status — Status Check with CDN Resolution
+
+The client polls this endpoint to discover when processing completes. For each media item:
+
+- If already `active`, return as-is
+- Check the **media bucket** for the processed file; if found, build CDN URL (+ optional thumbnail) and update the record to `active`
+- If not in media bucket, check the **uploads bucket** — if missing from both and status is `processing`, mark as `failed`
+
+After resolving all items, the handler derives aggregate report status:
+
+```typescript
+// backend/api/src/routes/reports.ts  (lines 241–297)
+router.get('/:id/media/status', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  const report = await reportModel.findById(id);
+  if (!report) throw HttpError.notFound('Report not found');
+
+  const mediaItems = await mediaModel.findByReportId(id);
+
+  if (mediaItems.length === 0) {
+    res.json({ status: report.status, media: [] });
     return;
   }
-  
-  const mediaUrl = `https://${config.aws.cdnDomain}/${outputKey}`;
-  const thumbnailUrl = `https://${config.aws.cdnDomain}/${thumbnailKey}`;
-  
-  await query(
-    `UPDATE media SET url = $1, thumbnail_url = $2, status = 'ready' WHERE original_key = $3`,
-    [mediaUrl, thumbnailUrl, originalKey]
+
+  const results = await Promise.all(
+    mediaItems.map(async (item) => {
+      if (item.status === 'active') return item;
+      if (!item.media_key) return item;
+
+      const processedKey = item.media_key;
+      const processed = await s3.objectExists(config.aws.s3MediaBucket, processedKey);
+
+      if (processed) {
+        const cdnUrl = s3.buildCdnUrl(processedKey);
+
+        const thumbnailKey = processedKey.replace(/\.[^.]+$/, '_thumb.jpg');
+        const hasThumb = await s3.objectExists(config.aws.s3MediaBucket, thumbnailKey);
+        const thumbUrl = hasThumb ? s3.buildCdnUrl(thumbnailKey) : null;
+
+        const updated = await mediaModel.updateUrls(processedKey, cdnUrl, thumbUrl);
+        return updated ?? item;
+      }
+
+      const stillInUploads = await s3.objectExists(config.aws.s3UploadsBucket, processedKey);
+      if (!stillInUploads && item.status === 'processing') {
+        await mediaModel.updateStatus(processedKey, 'failed');
+        return { ...item, status: 'failed' };
+      }
+
+      return item;
+    }),
   );
-  
-  // TODO: Notify connected clients via WebSocket
+
+  const allActive = results.every((m) => m.status === 'active');
+  const anyFailed = results.some((m) => m.status === 'failed');
+
+  if (allActive && report.status !== 'active') {
+    await reportModel.updateStatus(id, 'active');
+  } else if (anyFailed && report.status === 'processing') {
+    await reportModel.updateStatus(id, 'failed');
+  }
+
+  const currentStatus = allActive ? 'active' : anyFailed ? 'failed' : report.status;
+
+  res.json({ status: currentStatus, media: results });
+});
+```
+
+### Media Model
+
+Tracks media records keyed by `media_key`. The `updateUrls` function atomically sets the CDN URL, thumbnail, and status to `active`:
+
+```typescript
+// backend/api/src/models/media.ts  (lines 42–54)
+export async function updateUrls(
+  mediaKey: string,
+  url: string,
+  thumbnailUrl: string | null,
+): Promise<Media | null> {
+  const { rows } = await query<Media>(
+    `UPDATE media SET url = $2, thumbnail_url = $3, status = 'active'
+     WHERE media_key = $1
+     RETURNING ${MEDIA_COLUMNS}`,
+    [mediaKey, url, thumbnailUrl],
+  );
+  return rows[0] ?? null;
 }
-
-module.exports = {
-  generatePresignedUrl,
-  completeUpload,
-  handleMediaConvertComplete,
-};
 ```
 
-### 4. Validation Schemas
-```javascript
-// backend/src/validators/uploadSchemas.js
+### Validation Schemas
 
-const Joi = require('joi');
+Zod schemas with a cross-field refinement ensuring `content_type` matches `file_type`:
 
-const uploadSchemas = {
-  presignedUrl: Joi.object({
-    filename: Joi.string().max(255).required(),
-    contentType: Joi.string().valid(
-      'video/mp4', 'video/quicktime',
-      'image/jpeg', 'image/png'
-    ).required(),
-    fileSize: Joi.number().min(1).max(100 * 1024 * 1024).required(),
-  }),
-  
-  complete: Joi.object({
-    uploadId: Joi.string().uuid().required(),
-    reportId: Joi.string().uuid().required(),
-  }),
-};
+```typescript
+// backend/api/src/validators/media.ts
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'] as const;
+const ALLOWED_CONTENT_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_VIDEO_TYPES] as const;
 
-module.exports = { uploadSchemas };
+export const uploadRequestSchema = z.object({
+  device_id: z.string().min(1).max(64),
+  file_type: z.enum(['image', 'video']),
+  content_type: z.enum(ALLOWED_CONTENT_TYPES),
+}).refine(
+  (data) => {
+    if (data.file_type === 'image') {
+      return (ALLOWED_IMAGE_TYPES as readonly string[]).includes(data.content_type);
+    }
+    return (ALLOWED_VIDEO_TYPES as readonly string[]).includes(data.content_type);
+  },
+  { message: 'content_type does not match file_type', path: ['content_type'] },
+);
+
+export const uploadCompleteSchema = z.object({
+  device_id: z.string().min(1).max(64),
+  media_key: z.string().min(1).max(500),
+});
 ```
 
-### 5. Media Repository
-```javascript
-// backend/src/repositories/mediaRepository.js
+### Database Migration
 
-const BaseRepository = require('./baseRepository');
-const { query } = require('../config/database');
+```sql
+-- backend/api/migrations/1709200000000_add-media-key.sql
 
-class MediaRepository extends BaseRepository {
-  constructor() {
-    super('media');
-  }
-  
-  async findByReportId(reportId) {
-    const result = await query(
-      `SELECT * FROM media WHERE report_id = $1 AND status = 'ready' ORDER BY created_at`,
-      [reportId]
-    );
-    return result.rows;
-  }
-  
-  async findPendingByOriginalKey(originalKey) {
-    const result = await query(
-      `SELECT * FROM media WHERE original_key = $1`,
-      [originalKey]
-    );
-    return result.rows[0];
-  }
-}
+ALTER TABLE media ADD COLUMN media_key VARCHAR(500);
+ALTER TABLE media ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'pending';
 
-module.exports = new MediaRepository();
+CREATE INDEX idx_media_media_key ON media(media_key);
+CREATE INDEX idx_media_status ON media(status);
 ```
 
-## Upload Flow Diagram
-```
-Mobile App                  API Server                  S3 / Step Functions Pipeline
-    │                           │                           │
-    │  POST /api/reports        │                           │
-    │  {type, desc, location}   │                           │
-    │ ─────────────────────────>│                           │
-    │                           │  INSERT report            │
-    │                           │  (status: processing)     │
-    │  { reportId,              │                           │
-    │    uploadUrl (presigned) }│                           │
-    │ <─────────────────────────│                           │
-    │                           │                           │
-    │  PUT uploadUrl (file)     │                           │
-    │ ─────────────────────────────────────────────────────>│
-    │                           │                           │
-    │  200 OK                   │      EventBridge ──> Step Functions:
-    │ <─────────────────────────────────────────────────────│  1. Route by file type
-    │                           │                           │  2. Rekognition moderation
-    │                           │                           │     (sync images / async videos)
-    │                           │                           │  3. Images: S3 copy to media
-    │                           │                           │     Videos: MediaConvert transcode
-    │                           │                           │  4. (Future) Update DB
-    │                           │                           │  5. (Future) Push notification
-    │                           │                           │
-    │  (Later) WebSocket:       │                           │
-    │  media:ready event        │                           │
-    │ <─────────────────────────│                           │
-```
+## API Endpoints Summary
 
-## Deliverable Checklist
-- [ ] POST `/api/reports` creates report + generates presigned URL in one call
-- [ ] File type validation working
-- [ ] File size limits enforced
-- [ ] Client can upload directly to S3
-- [ ] S3 upload triggers Step Functions pipeline via EventBridge
-- [ ] Rekognition moderation check runs before transcoding
-- [ ] Flagged content is deleted, never transcoded
-- [ ] Safe content is transcoded by MediaConvert
-- [ ] CDN URLs work for playback
-- [ ] Error handling for failed uploads
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/reports/:id/upload` | Generate presigned URL + create pending media record |
+| POST | `/api/v1/reports/:id/upload/complete` | Verify S3 upload, transition to processing |
+| GET | `/api/v1/reports/:id/media/status` | Poll for processing completion, resolve CDN URLs |
 
-## Files (5 total)
-1. `backend/src/routes/v1/uploads.js` - Create
-2. `backend/src/controllers/uploadController.js` - Create
-3. `backend/src/services/uploadService.js` - Create
-4. `backend/src/validators/uploadSchemas.js` - Create
-5. `backend/src/repositories/mediaRepository.js` - Update
+## Testing
+
+Two test suites cover this milestone, both using Jest with `supertest` for route tests and mock-based unit tests for models.
+
+**`src/__tests__/routes/media-upload.test.ts`** (route integration):
+
+*POST /upload:*
+- Returns 201 with `upload_url`, `media_key`, `expires_in`
+- 404 for missing report
+- 403 when device doesn't own report
+- 403 when report is removed
+- 409 when report is already processing/active
+- 403 when device is flagged
+- 400 when media limit (5) exceeded
+- 400 when `content_type` doesn't match `file_type`
+- 400 when required fields missing
+
+*POST /upload/complete:*
+- 200 with `status: processing` on successful verification
+- 404 for missing report, missing media_key
+- 403 for non-owner device
+- 400 when file not found in S3
+- Idempotent: returns current status when already `processing` or `active`
+
+*GET /media/status:*
+- Returns empty media array when none exist
+- Resolves CDN URLs and returns `active` when processed file is in media bucket
+- Marks media `failed` when file vanishes from both buckets
+- 404 for missing report
+
+**`src/__tests__/models/media.test.ts`** (model unit):
+- `findByReportId` returns media items
+- `create` inserts and returns media record
+- `deleteByReportId` returns deletion count
+
+## Notes
+
+### Deviations from Original Plan
+- **TypeScript + ES modules** instead of JavaScript + CommonJS (`require`)
+- **No controller/service layer** — route handlers call model and S3 functions directly (flat architecture)
+- **Zod** for validation instead of Joi
+- **Two-phase flow** (upload + complete) instead of single-request presigned URL generation bundled with report creation
+- **Polling-based** status resolution instead of WebSocket/MediaConvert callback — the `GET /media/status` endpoint actively checks both S3 buckets and updates records in real time
+- **No in-memory `pendingUploads` Map** — media records are persisted to PostgreSQL immediately with a `media_key` column, making the flow stateless and horizontally scalable
+- **`media_key`** used as the tracking identifier instead of a separate `uploadId` / `original_key`
+- **Media key structure** is `{images|videos}/{reportId}/{fileId}.{ext}` instead of `{folder}/{uploadId}.{ext}`
+- **Report status gating** via `UPLOAD_ALLOWED_STATUSES` set (`pending`, `uploading`, `failed`) prevents duplicate upload flows
+- **Presigned URL TTL** is 15 minutes instead of 1 hour
+- **Thumbnail detection** is convention-based (`_thumb.jpg` suffix) checked via `HeadObject`, not via a MediaConvert callback
+- **`webp` and `webm`** added as allowed content types beyond the original `mp4`, `quicktime`, `jpeg`, `png`

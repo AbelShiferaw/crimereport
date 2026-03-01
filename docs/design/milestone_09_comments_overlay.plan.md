@@ -1,156 +1,257 @@
 # Milestone 9: Comments Overlay
 
+## Status
+Completed
+
 ## Goal
-Implement a slide-up bottom sheet for viewing and posting comments on crime reports.
+Implement a slide-up modal bottom sheet for viewing and posting comments on crime reports, with anonymous avatars, OP badges, upvoting, loading/error/empty states, and a text input bar.
 
 ## Dependencies
-Requires **Milestone 4** complete (feed UI with comment button).
+Requires **Milestone 4** complete (feed UI with comment button on `FeedVideoItem`).
 
-## Implementation
+## What Was Built
+A `CommentsSheet` (`ConsumerStatefulWidget`) displayed via `showModalBottomSheet`, backed by:
+- A `commentsProvider` (async family provider) that fetches comments with simulated network delay
+- A `CommentTile` widget with deterministic avatar colors, OP badge, relative timestamps, and local upvote toggling
+- A `Comment` model with JSON serialization and `timeAgo` formatting
+- Loading spinner, error-with-retry, and empty states
 
-### 1. Comments Bottom Sheet
+## Key Files
+
+| File | Description |
+|---|---|
+| `apps/mobile/lib/features/feed/presentation/widgets/comments_sheet.dart` | Modal sheet with draggable sizing, comments list, input bar |
+| `apps/mobile/lib/features/feed/presentation/widgets/comment_tile.dart` | Individual comment row — avatar, name, OP badge, upvote, timestamp |
+| `apps/mobile/lib/features/feed/data/models/comment.dart` | `Comment` model with `fromJson`, `toJson`, `timeAgo` |
+| `apps/mobile/lib/features/feed/providers/feed_providers.dart` | `commentsProvider`, `upvotedCommentsProvider`, `toggleCommentUpvote` |
+| `apps/mobile/test/features/feed/data/models/comment_test.dart` | Unit tests for Comment model |
+| `apps/mobile/lib/core/constants/app_constants.dart` | Sheet sizing constants |
+
+## Implementation Details
+
+### 1. Comment Model
+
+A pure Dart model with JSON serialization and a computed `timeAgo` string:
+
 ```dart
-// lib/features/feed/presentation/widgets/comments_sheet.dart
-class CommentsSheet extends StatefulWidget {
+// comment.dart
+class Comment {
+  final String id;
   final String reportId;
-  
-  @override
-  State<CommentsSheet> createState() => _CommentsSheetState();
+  final String deviceId;
+  final String content;
+  final int upvotes;
+  final DateTime createdAt;
+  final bool isReporter;
+
+  String get timeAgo => _formatTimeAgo(createdAt);
+
+  factory Comment.fromJson(Map<String, dynamic> json) => Comment(
+    id: json['id'] as String,
+    reportId: json['report_id'] as String,
+    deviceId: json['device_id'] as String,
+    content: json['content'] as String,
+    upvotes: json['upvotes'] as int? ?? 0,
+    createdAt: DateTime.parse(json['created_at'] as String),
+    isReporter: json['is_reporter'] as bool? ?? false,
+  );
+
+  static String _formatTimeAgo(DateTime dateTime) {
+    final diff = DateTime.now().difference(dateTime);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    return '${(diff.inDays / 7).floor()}w ago';
+  }
+}
+```
+
+### 2. Comments Provider
+
+An auto-disposing `FutureProvider.family` that fetches comments for a given report ID:
+
+```dart
+// feed_providers.dart
+final commentsProvider =
+    FutureProvider.autoDispose.family<List<Comment>, String>((ref, reportId) {
+  return MockDataService.instance.getCommentsAsync(reportId);
+});
+```
+
+### 3. Upvote State Management
+
+Local upvote tracking via a `StateProvider<Set<String>>` and a helper function:
+
+```dart
+final upvotedCommentsProvider = StateProvider<Set<String>>((ref) => {});
+
+void toggleCommentUpvote(WidgetRef ref, String commentId) {
+  final notifier = ref.read(upvotedCommentsProvider.notifier);
+  final current = notifier.state;
+  if (current.contains(commentId)) {
+    notifier.state = {...current}..remove(commentId);
+  } else {
+    notifier.state = {...current, commentId};
+  }
+}
+```
+
+### 4. CommentsSheet Widget
+
+A `DraggableScrollableSheet` inside a modal bottom sheet with configurable sizing from `AppConstants`:
+
+```dart
+// comments_sheet.dart
+class CommentsSheet extends ConsumerStatefulWidget {
+  final String reportId;
+  const CommentsSheet({super.key, required this.reportId});
 }
 
-class _CommentsSheetState extends State<CommentsSheet> {
-  final _commentController = TextEditingController();
-  late List<Comment> _comments;
-  
-  @override
-  void initState() {
-    super.initState();
-    _comments = MockDataService().getCommentsForReport(widget.reportId);
-  }
-  
+class _CommentsSheetState extends ConsumerState<CommentsSheet> {
+  final _inputController = TextEditingController();
+  final _inputFocus = FocusNode();
+
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      initialChildSize: 0.6,
-      minChildSize: 0.4,
-      maxChildSize: 0.9,
-      builder: (context, scrollController) {
-        return Container(
-          decoration: BoxDecoration(
-            color: Color(0xFF1E1E1E),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-          ),
-          child: Column(
-            children: [
-              // Handle bar
-              _buildHandle(),
-              
-              // Header
-              _buildHeader(),
-              
-              // Comments list
-              Expanded(
-                child: ListView.builder(
-                  controller: scrollController,
-                  itemCount: _comments.length,
-                  itemBuilder: (_, i) => CommentTile(comment: _comments[i]),
+    final commentsAsync = ref.watch(commentsProvider(widget.reportId));
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => Navigator.of(context).pop(),
+      child: DraggableScrollableSheet(
+        initialChildSize: AppConstants.commentsSheetInitialSize,  // 0.6
+        minChildSize: AppConstants.commentsSheetMinSize,          // 0.4
+        maxChildSize: AppConstants.commentsSheetMaxSize,          // 0.9
+        builder: (context, scrollController) {
+          return AnimatedPadding(
+            duration: AppConstants.fastTransition,
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: Container(
+              decoration: const BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(AppSpacing.radiusXl),
                 ),
               ),
-              
-              // Input field
-              _buildCommentInput(),
-            ],
-          ),
-        );
-      },
+              child: Column(
+                children: [
+                  _buildHandle(),
+                  _buildHeader(commentsAsync),
+                  const Divider(color: AppColors.divider, height: 1),
+                  Expanded(child: commentsAsync.when(
+                    loading: _buildLoading,
+                    error: (e, _) => _buildError(e),
+                    data: (comments) {
+                      if (comments.isEmpty) return _buildEmpty();
+                      return ListView.builder(
+                        controller: scrollController,
+                        itemCount: comments.length,
+                        itemBuilder: (_, i) => CommentTile(comment: comments[i]),
+                      );
+                    },
+                  )),
+                  _buildInputBar(),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
     );
   }
 }
 ```
 
-### 2. Comment Tile
+### 5. Loading, Error & Empty States
+
+**Loading** — centered spinner:
 ```dart
-// lib/features/feed/presentation/widgets/comment_tile.dart
-class CommentTile extends StatelessWidget {
+Widget _buildLoading() {
+  return const Center(
+    child: Padding(
+      padding: EdgeInsets.all(AppSpacing.xxl),
+      child: CircularProgressIndicator(color: AppColors.textTertiary, strokeWidth: 2),
+    ),
+  );
+}
+```
+
+**Error** — message with tap-to-retry that invalidates the provider:
+```dart
+Widget _buildError(Object error) {
+  return Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Failed to load comments', style: ...),
+        GestureDetector(
+          onTap: () => ref.invalidate(commentsProvider(widget.reportId)),
+          child: Text('Tap to retry', style: ...),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+**Empty** — icon and encouragement text:
+```dart
+Widget _buildEmpty() {
+  return Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.chat_bubble_outline_rounded, size: AppSpacing.iconXl, color: AppColors.textDisabled),
+        Text('No comments yet', style: ...),
+        Text('Be the first to comment', style: ...),
+      ],
+    ),
+  );
+}
+```
+
+### 6. CommentTile Widget
+
+Each comment row shows a deterministic avatar, anonymous label, optional OP badge, relative timestamp, comment body, and an upvote button:
+
+```dart
+// comment_tile.dart
+class CommentTile extends ConsumerWidget {
   final Comment comment;
-  
+
+  Color _avatarColor(String deviceId) {
+    final colors = [
+      const Color(0xFF5C6BC0), const Color(0xFF26A69A),
+      const Color(0xFFEF5350), const Color(0xFFAB47BC),
+      const Color(0xFF42A5F5), const Color(0xFFFF7043),
+      const Color(0xFF66BB6A), const Color(0xFFFFCA28),
+    ];
+    return colors[deviceId.hashCode.abs() % colors.length];
+  }
+
+  String _avatarInitials(String deviceId) {
+    if (deviceId.length < 2) return '??';
+    return deviceId.substring(0, 2).toUpperCase();
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isUpvoted = ref.watch(upvotedCommentsProvider).contains(comment.id);
+    final displayUpvotes = comment.upvotes + (isUpvoted ? 1 : 0);
+
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm + AppSpacing.xs),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Anonymous avatar
           CircleAvatar(
             radius: 16,
-            backgroundColor: Colors.grey[700],
-            child: Text(
-              'A${comment.deviceId.substring(0, 2).toUpperCase()}',
-              style: TextStyle(fontSize: 10, color: Colors.white),
-            ),
+            backgroundColor: _avatarColor(comment.deviceId),
+            child: Text(_avatarInitials(comment.deviceId), style: ...),
           ),
-          SizedBox(width: 12),
-          
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Username + badge
-                Row(
-                  children: [
-                    Text(
-                      'Anonymous',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13,
-                      ),
-                    ),
-                    if (comment.isReporter) ...[
-                      SizedBox(width: 6),
-                      Container(
-                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          'OP',
-                          style: TextStyle(fontSize: 9, color: Colors.white),
-                        ),
-                      ),
-                    ],
-                    Spacer(),
-                    Text(
-                      _formatTime(comment.createdAt),
-                      style: TextStyle(color: Colors.grey, fontSize: 11),
-                    ),
-                  ],
-                ),
-                SizedBox(height: 4),
-                
-                // Comment text
-                Text(
-                  comment.content,
-                  style: TextStyle(color: Colors.white, fontSize: 14),
-                ),
-                SizedBox(height: 6),
-                
-                // Upvote button
-                Row(
-                  children: [
-                    Icon(Icons.arrow_upward, size: 14, color: Colors.grey),
-                    SizedBox(width: 4),
-                    Text(
-                      '${comment.upvotes}',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+          // ... name row with OP badge, timestamp, body, upvote button
         ],
       ),
     );
@@ -158,39 +259,84 @@ class CommentTile extends StatelessWidget {
 }
 ```
 
-### 3. Comment Input
+**OP Badge** — shown when `comment.isReporter` is true:
 ```dart
-Widget _buildCommentInput() {
-  return Container(
-    padding: EdgeInsets.all(12),
+if (comment.isReporter) ...[
+  const SizedBox(width: AppSpacing.xs + 2),
+  Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
     decoration: BoxDecoration(
-      color: Color(0xFF2A2A2A),
-      border: Border(top: BorderSide(color: Colors.grey[800]!)),
+      color: AppColors.accent,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+    ),
+    child: const Text('OP', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: Colors.white)),
+  ),
+],
+```
+
+**Upvote Button** — toggles local state with haptic feedback:
+```dart
+GestureDetector(
+  onTap: () {
+    HapticFeedback.lightImpact();
+    toggleCommentUpvote(ref, comment.id);
+  },
+  child: Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(Icons.arrow_upward_rounded, size: 14,
+        color: isUpvoted ? AppColors.accent : AppColors.textTertiary),
+      Text('$displayUpvotes', style: ...),
+    ],
+  ),
+),
+```
+
+### 7. Comment Input Bar
+
+A styled text field with a circular send button. Functionally clears input on tap but does not persist (backend integration deferred to Phase D):
+
+```dart
+Widget _buildInputBar() {
+  return Container(
+    decoration: const BoxDecoration(
+      color: AppColors.card,
+      border: Border(top: BorderSide(color: AppColors.divider, width: 0.5)),
     ),
     child: SafeArea(
+      top: false,
       child: Row(
         children: [
           Expanded(
             child: TextField(
-              controller: _commentController,
-              style: TextStyle(color: Colors.white),
+              controller: _inputController,
+              focusNode: _inputFocus,
               decoration: InputDecoration(
                 hintText: 'Add a comment...',
-                hintStyle: TextStyle(color: Colors.grey),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(24),
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusXxl),
                   borderSide: BorderSide.none,
                 ),
                 filled: true,
-                fillColor: Colors.grey[800],
-                contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                fillColor: AppColors.elevated,
               ),
             ),
           ),
-          SizedBox(width: 8),
-          IconButton(
-            onPressed: _submitComment,
-            icon: Icon(Icons.send, color: Colors.red),
+          GestureDetector(
+            onTap: () {
+              if (_inputController.text.trim().isNotEmpty) {
+                _inputController.clear();
+                _inputFocus.unfocus();
+              }
+            },
+            child: Container(
+              width: 40, height: 40,
+              decoration: const BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
+            ),
           ),
         ],
       ),
@@ -199,32 +345,36 @@ Widget _buildCommentInput() {
 }
 ```
 
-### 4. Show Sheet from Feed
+### 8. Keyboard Handling
+
+The sheet animates its bottom padding to stay above the keyboard using `MediaQuery.of(context).viewInsets.bottom`:
+
 ```dart
-// In FeedVideoItem
-void _showComments() {
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (_) => CommentsSheet(reportId: widget.report.id),
-  );
-}
+AnimatedPadding(
+  duration: AppConstants.fastTransition,
+  padding: EdgeInsets.only(bottom: bottomInset),
+  child: /* sheet content */,
+),
 ```
 
-## Deliverable Checklist
-- [ ] Comment button opens bottom sheet
-- [ ] Sheet slides up smoothly
-- [ ] Can drag sheet to resize
-- [ ] Comments list displays mock comments
-- [ ] Anonymous avatars with initials
-- [ ] "OP" badge for reporter's comments
-- [ ] Timestamps shown
-- [ ] Comment input field at bottom
-- [ ] Send button visible (non-functional for now)
-- [ ] Upvote count on comments
+## Testing
 
-## Files (3 total)
-1. `lib/features/feed/presentation/widgets/comments_sheet.dart` - Create
-2. `lib/features/feed/presentation/widgets/comment_tile.dart` - Create
-3. `lib/features/feed/presentation/widgets/feed_video_item.dart` - Update to show sheet
+Unit tests exist for the `Comment` model at `apps/mobile/test/features/feed/data/models/comment_test.dart`:
+
+- `timeAgo` returns a non-empty string
+- Equality by `id`
+- `hashCode` consistency
+- `toJson` / `fromJson` roundtrip
+- `fromJson` handles null optional fields (`upvotes`, `is_reporter`)
+- `toString` contains id and truncated content
+
+No widget tests for `CommentsSheet` or `CommentTile`.
+
+## Notes
+- The original plan used `MockDataService` synchronously in `initState`. The actual implementation uses an async `FutureProvider` (`commentsProvider`), enabling loading and error states.
+- Upvote is fully functional client-side (toggling with haptic feedback and color change) — the original plan had it as display-only.
+- Avatar colors are deterministic based on `deviceId.hashCode` (8-color palette), not random.
+- The send button uses `arrow_upward_rounded` (not `send`) to match the app's visual language.
+- Tapping outside the sheet (on the scrim) dismisses it via the outer `GestureDetector` + `Navigator.pop`.
+- The sheet uses `AnimatedPadding` to smoothly adjust when the keyboard appears.
+- The `DraggableScrollableSheet` sizing is configured via `AppConstants` (initial: 0.6, min: 0.4, max: 0.9).

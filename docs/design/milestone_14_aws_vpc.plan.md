@@ -1,234 +1,269 @@
-# Milestone 14: AWS Account & VPC
+# Milestone 14: AWS VPC & Network Security
+
+## Status
+Completed
 
 ## Goal
-Set up AWS infrastructure foundation: VPC, subnets, security groups, and IAM roles needed for the backend.
+Set up the AWS networking foundation using CDK: VPC with public/private subnets, NAT gateway, security groups for all services, WAF with managed rules, and VPC flow logs.
 
 ## Dependencies
-Requires AWS account with admin access.
+- AWS account with CDK bootstrap (`cdk bootstrap`)
+- Node.js 20+, AWS CDK CLI
 
-## Implementation
+## What Was Built
+A three-stack networking layer deployed via AWS CDK (TypeScript):
 
-### 1. VPC Architecture
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         VPC (10.0.0.0/16)                   │
-│  ┌─────────────────────┐    ┌─────────────────────┐        │
-│  │  Public Subnet A    │    │  Public Subnet B    │        │
-│  │  10.0.1.0/24        │    │  10.0.2.0/24        │        │
-│  │  - ALB              │    │  - ALB              │        │
-│  │  - NAT Gateway      │    │                     │        │
-│  └─────────────────────┘    └─────────────────────┘        │
-│                                                             │
-│  ┌─────────────────────┐    ┌─────────────────────┐        │
-│  │  Private Subnet A   │    │  Private Subnet B   │        │
-│  │  10.0.10.0/24       │    │  10.0.11.0/24       │        │
-│  │  - ECS Tasks        │    │  - ECS Tasks        │        │
-│  │  - Aurora           │    │  - Aurora           │        │
-│  │  - Redis            │    │  - Redis            │        │
-│  └─────────────────────┘    └─────────────────────┘        │
-└─────────────────────────────────────────────────────────────┘
-```
+1. **NetworkStack** — VPC with 2 AZs, public + private subnets, single NAT gateway, VPC flow logs to CloudWatch
+2. **SecurityStack** — Four security groups (ALB, ECS, DB, Redis) with least-privilege ingress rules
+3. **WafStack** — Regional WAF WebACL with IP rate limiting and three AWS managed rule sets, plus WAF logging
 
-### 2. Terraform/CloudFormation Setup
-```hcl
-# infrastructure/vpc.tf
+All stacks are wired together in `crimereport-stack.ts` with explicit dependency ordering.
 
-resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-  
-  tags = { Name = "reportcrime-vpc" }
-}
+## Key Files
 
-# Public subnets (for ALB)
-resource "aws_subnet" "public_a" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = "us-east-1a"
-  map_public_ip_on_launch = true
-  tags = { Name = "reportcrime-public-a" }
-}
+| File | Description |
+|------|-------------|
+| `infrastructure/aws/lib/network/network-stack.ts` | VPC, subnets, NAT gateway, flow logs |
+| `infrastructure/aws/lib/network/security-stack.ts` | ALB, ECS, DB, and Redis security groups |
+| `infrastructure/aws/lib/network/waf-stack.ts` | WAF WebACL, rate limiting, managed rules, WAF logging |
+| `infrastructure/aws/lib/config/constants.ts` | Shared constants (CIDR, ports, rate limits, etc.) |
+| `infrastructure/aws/bin/crimereport-stack.ts` | App entry point — stack instantiation and dependency wiring |
+| `infrastructure/aws/test/network/network-stack.test.ts` | Network stack CDK assertions |
+| `infrastructure/aws/test/network/security-stack.test.ts` | Security group CDK assertions |
+| `infrastructure/aws/test/network/waf-stack.test.ts` | WAF CDK assertions |
 
-resource "aws_subnet" "public_b" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.2.0/24"
-  availability_zone       = "us-east-1b"
-  map_public_ip_on_launch = true
-  tags = { Name = "reportcrime-public-b" }
-}
+## Implementation Details
 
-# Private subnets (for ECS, Aurora, Redis)
-resource "aws_subnet" "private_a" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.10.0/24"
-  availability_zone = "us-east-1a"
-  tags = { Name = "reportcrime-private-a" }
-}
+### 1. Shared Constants
 
-resource "aws_subnet" "private_b" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.11.0/24"
-  availability_zone = "us-east-1b"
-  tags = { Name = "reportcrime-private-b" }
-}
+All networking constants live in a single config file referenced by every stack:
+
+```typescript
+// infrastructure/aws/lib/config/constants.ts
+export const VPC_CIDR = '10.0.0.0/16';
+export const MAX_AZS = 2;
+export const NAT_GATEWAYS = 1;
+
+export const API_PORT = 3000;
+export const DB_PORT = 5432;
+export const REDIS_PORT = 6379;
+
+export const WAF_RATE_LIMIT = 2000;
+
+export const DEFAULT_TAGS: Record<string, string> = {
+  Project: 'CrimeReport',
+  ManagedBy: 'CDK',
+};
 ```
 
-### 3. Internet & NAT Gateway
-```hcl
-# Internet Gateway (public internet access)
-resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
-}
+### 2. VPC (NetworkStack)
 
-# NAT Gateway (private subnet outbound)
-resource "aws_eip" "nat" {
-  domain = "vpc"
-}
+The VPC uses CDK's high-level `ec2.Vpc` construct which automatically creates subnets, route tables, an Internet Gateway, and a NAT gateway:
 
-resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public_a.id
-}
-
-# Route tables
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
-  }
-}
-
-resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.main.id
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
-  }
-}
+```typescript
+// infrastructure/aws/lib/network/network-stack.ts
+this.vpc = new ec2.Vpc(this, 'CrimeReportVpc', {
+  vpcName: `${PROJECT_PREFIX}-vpc`,
+  maxAzs: MAX_AZS,
+  natGateways: NAT_GATEWAYS,
+  ipAddresses: ec2.IpAddresses.cidr(VPC_CIDR),
+  subnetConfiguration: [
+    {
+      name: 'Public',
+      subnetType: ec2.SubnetType.PUBLIC,
+      cidrMask: 24,
+      mapPublicIpOnLaunch: true,
+    },
+    {
+      name: 'Private',
+      subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+      cidrMask: 24,
+    },
+  ],
+});
 ```
 
-### 4. Security Groups
-```hcl
-# ALB Security Group
-resource "aws_security_group" "alb" {
-  name   = "reportcrime-alb-sg"
-  vpc_id = aws_vpc.main.id
-  
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
+Result: 2 public subnets (ALB), 2 private subnets (ECS, Aurora, Redis), 1 NAT gateway for private subnet egress.
 
-# ECS Tasks Security Group
-resource "aws_security_group" "ecs" {
-  name   = "reportcrime-ecs-sg"
-  vpc_id = aws_vpc.main.id
-  
-  ingress {
-    from_port       = 3000
-    to_port         = 3000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
-  
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-}
+VPC flow logs capture ALL traffic to a CloudWatch log group with 30-day retention:
 
-# Database Security Group
-resource "aws_security_group" "db" {
-  name   = "reportcrime-db-sg"
-  vpc_id = aws_vpc.main.id
-  
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs.id]
-  }
-}
+```typescript
+const flowLogGroup = new logs.LogGroup(this, 'VpcFlowLogs', {
+  logGroupName: `/vpc/${PROJECT_PREFIX}-flow-logs`,
+  retention: logs.RetentionDays.ONE_MONTH,
+  removalPolicy: cdk.RemovalPolicy.DESTROY,
+});
 
-# Redis Security Group
-resource "aws_security_group" "redis" {
-  name   = "reportcrime-redis-sg"
-  vpc_id = aws_vpc.main.id
-  
-  ingress {
-    from_port       = 6379
-    to_port         = 6379
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs.id]
-  }
-}
+this.vpc.addFlowLog('FlowLog', {
+  destination: ec2.FlowLogDestination.toCloudWatchLogs(flowLogGroup),
+  trafficType: ec2.FlowLogTrafficType.ALL,
+});
 ```
 
-### 5. IAM Roles
-```hcl
-# ECS Task Execution Role
-resource "aws_iam_role" "ecs_execution" {
-  name = "reportcrime-ecs-execution"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
-}
+### 3. Security Groups (SecurityStack)
 
-resource "aws_iam_role_policy_attachment" "ecs_execution" {
-  role       = aws_iam_role.ecs_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
+Four security groups with least-privilege rules. DB and Redis SGs explicitly block all outbound (`allowAllOutbound: false`):
 
-# ECS Task Role (app permissions)
-resource "aws_iam_role" "ecs_task" {
-  name = "reportcrime-ecs-task"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
-}
+```typescript
+// infrastructure/aws/lib/network/security-stack.ts
+
+// ALB — accepts HTTP/HTTPS from internet (IPv4 + IPv6)
+this.albSecurityGroup = new ec2.SecurityGroup(this, 'AlbSg', {
+  vpc,
+  securityGroupName: `${PROJECT_PREFIX}-alb-sg`,
+  description: 'API Gateway ALB - accepts HTTP/HTTPS from internet',
+  allowAllOutbound: true,
+});
+this.albSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS from internet (IPv4)');
+this.albSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'HTTP from internet (IPv4, redirect to HTTPS)');
+this.albSecurityGroup.addIngressRule(ec2.Peer.anyIpv6(), ec2.Port.tcp(443), 'HTTPS from internet (IPv6)');
+this.albSecurityGroup.addIngressRule(ec2.Peer.anyIpv6(), ec2.Port.tcp(80), 'HTTP from internet (IPv6, redirect to HTTPS)');
+
+// ECS — only from ALB on API_PORT (3000)
+this.ecsSecurityGroup = new ec2.SecurityGroup(this, 'EcsSg', {
+  vpc,
+  securityGroupName: `${PROJECT_PREFIX}-ecs-sg`,
+  description: 'Report API Service - accepts traffic from ALB only',
+  allowAllOutbound: true,
+});
+this.ecsSecurityGroup.addIngressRule(this.albSecurityGroup, ec2.Port.tcp(API_PORT), 'API traffic from ALB');
+
+// DB — only from ECS on DB_PORT (5432), no outbound
+this.dbSecurityGroup = new ec2.SecurityGroup(this, 'DbSg', {
+  vpc,
+  securityGroupName: `${PROJECT_PREFIX}-db-sg`,
+  description: 'Crime Reports DB - accepts connections from ECS only',
+  allowAllOutbound: false,
+});
+this.dbSecurityGroup.addIngressRule(this.ecsSecurityGroup, ec2.Port.tcp(DB_PORT), 'PostgreSQL from ECS tasks');
+
+// Redis — only from ECS on REDIS_PORT (6379), no outbound
+this.redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSg', {
+  vpc,
+  securityGroupName: `${PROJECT_PREFIX}-redis-sg`,
+  description: 'Feed Cache + Socket Adapter - accepts connections from ECS only',
+  allowAllOutbound: false,
+});
+this.redisSecurityGroup.addIngressRule(this.ecsSecurityGroup, ec2.Port.tcp(REDIS_PORT), 'Redis from ECS tasks');
 ```
 
-## Deliverable Checklist
-- [ ] VPC created with proper CIDR
-- [ ] 2 public subnets across AZs
-- [ ] 2 private subnets across AZs
-- [ ] Internet Gateway attached
-- [ ] NAT Gateway in public subnet
-- [ ] Route tables configured
-- [ ] ALB security group (443 inbound)
-- [ ] ECS security group (3000 from ALB)
-- [ ] DB security group (5432 from ECS)
-- [ ] Redis security group (6379 from ECS)
-- [ ] ECS execution role created
-- [ ] ECS task role created
-- [ ] Can deploy test EC2 in private subnet
+### 4. WAF (WafStack)
 
-## Files (4 total)
-1. `infrastructure/vpc.tf` - VPC and subnets
-2. `infrastructure/security_groups.tf` - Security groups
-3. `infrastructure/iam.tf` - IAM roles
-4. `infrastructure/variables.tf` - Configurable values
+A REGIONAL WebACL with four rules attached to the ALB (association happens in the ComputeStack):
+
+```typescript
+// infrastructure/aws/lib/network/waf-stack.ts
+const webAcl = new wafv2.CfnWebACL(this, 'CrimeReportWaf', {
+  name: `${PROJECT_PREFIX}-waf`,
+  scope: 'REGIONAL',
+  defaultAction: { allow: {} },
+  rules: [
+    // 1. Rate limiting — block IPs exceeding 2000 req/5min
+    {
+      name: 'RateLimitPerIP',
+      priority: 1,
+      action: { block: {} },
+      statement: {
+        rateBasedStatement: { limit: WAF_RATE_LIMIT, aggregateKeyType: 'IP' },
+      },
+      // ... visibilityConfig
+    },
+    // 2. AWS Common Rule Set (XSS, bad bots, etc.)
+    {
+      name: 'AWSManagedRulesCommonRuleSet',
+      priority: 2,
+      overrideAction: { none: {} },
+      statement: {
+        managedRuleGroupStatement: { vendorName: 'AWS', name: 'AWSManagedRulesCommonRuleSet' },
+      },
+    },
+    // 3. Known Bad Inputs (Log4j, etc.)
+    {
+      name: 'AWSManagedRulesKnownBadInputs',
+      priority: 3,
+      overrideAction: { none: {} },
+      statement: {
+        managedRuleGroupStatement: { vendorName: 'AWS', name: 'AWSManagedRulesKnownBadInputsRuleSet' },
+      },
+    },
+    // 4. SQL Injection protection
+    {
+      name: 'AWSManagedRulesSQLiRuleSet',
+      priority: 4,
+      overrideAction: { none: {} },
+      statement: {
+        managedRuleGroupStatement: { vendorName: 'AWS', name: 'AWSManagedRulesSQLiRuleSet' },
+      },
+    },
+  ],
+});
+```
+
+WAF logging goes to a CloudWatch log group (name must start with `aws-waf-logs-`):
+
+```typescript
+const wafLogGroup = new logs.LogGroup(this, 'WafLogGroup', {
+  logGroupName: `aws-waf-logs-${PROJECT_PREFIX}`,
+  retention: logs.RetentionDays.ONE_MONTH,
+  removalPolicy: cdk.RemovalPolicy.DESTROY,
+});
+
+new wafv2.CfnLoggingConfiguration(this, 'WafLogging', {
+  resourceArn: webAcl.attrArn,
+  logDestinationConfigs: [wafLogGroup.logGroupArn],
+});
+```
+
+### 5. Stack Wiring
+
+```typescript
+// infrastructure/aws/bin/crimereport-stack.ts
+const networkStack = new NetworkStack(app, 'CrimeReport-Network', { env });
+const wafStack = new WafStack(app, 'CrimeReport-Waf', { env });
+
+const securityStack = new SecurityStack(app, 'CrimeReport-Security', {
+  env,
+  vpc: networkStack.vpc,
+});
+securityStack.addDependency(networkStack);
+```
+
+The `webAclArn` is exported from WafStack and consumed by ComputeStack to associate the WAF with the ALB.
+
+## Testing
+
+CDK assertion tests in `infrastructure/aws/test/network/`:
+
+**network-stack.test.ts** (7 tests):
+- VPC created with correct CIDR (`10.0.0.0/16`)
+- Exactly 2 public subnets with public IPs
+- Exactly 2 private subnets
+- Exactly 1 NAT gateway
+- Internet Gateway created and attached
+- VPC flow logs to CloudWatch
+- Flow log log group with correct name and 30-day retention
+
+**security-stack.test.ts** (7 tests):
+- Exactly 4 security groups created
+- ALB SG allows HTTPS from IPv4 and IPv6
+- ECS SG allows inbound on port 3000 from ALB SG only
+- DB SG allows inbound on port 5432 from ECS SG only
+- Redis SG allows inbound on port 6379 from ECS SG only
+- DB and Redis SGs block all outbound
+
+**waf-stack.test.ts** (7 tests):
+- WebACL with REGIONAL scope and Allow default action
+- Rate-limiting rule with limit of 2000
+- All three AWS managed rule sets attached
+- WAF logging configured to CloudWatch
+- WAF log group with `aws-waf-logs-` prefix and 30-day retention
+
+## Notes
+
+- **Deviation from original plan**: The original plan used Terraform HCL. The actual implementation uses AWS CDK (TypeScript) with high-level constructs.
+- **IAM roles** were moved to a separate `IamStack` (Milestone 17 / compute dependency) rather than living in the network layer.
+- **WAF was not in the original plan** but was added as a separate stack for defense-in-depth (rate limiting + managed rules).
+- **VPC flow logs were not in the original plan** but were added for network traffic auditing.
+- **IPv6 ingress** on the ALB SG was added beyond the original plan's IPv4-only rules.
+- **DB and Redis SGs** explicitly disable all outbound traffic (`allowAllOutbound: false`), which is stricter than the original plan.
+- The single NAT gateway is a cost-saving measure for MVP; production should use one per AZ.

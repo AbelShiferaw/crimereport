@@ -909,11 +909,13 @@ Development is broken into reviewable milestones. After each milestone, review t
 | 23 | WebSocket Server | WebSocket connects, receives test broadcasts |
 | 24 | Push Notifications | Push notifications received on device |
 
-### Phase C½: CI/CD Pipeline
+### Phase C½: CI/CD Pipeline & API Documentation
 
 | # | Milestone | Deliverable |
 |---|-----------|-------------|
 | 24½ | CI/CD Pipeline | GitHub Actions workflows for automated build, test, Docker push to ECR, and ECS deploy on merge to main. CDK diff on PRs. |
+
+**API Reference** — After completing Milestone 24, a comprehensive API documentation section will be added to this plan covering all implemented endpoints, request/response schemas, authentication (device ID), error codes, rate limits, and the media upload flow. This serves as the definitive reference for Phase D (Flutter integration).
 
 ### Phase D: Integration
 

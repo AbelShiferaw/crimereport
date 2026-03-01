@@ -1,310 +1,296 @@
 # Milestone 23: WebSocket Server
 
+## Status
+Not Started
+
 ## Goal
-Implement Socket.io WebSocket server for real-time updates (new reports, comments, upvotes).
+Add real-time functionality to the existing HTTP server via Socket.io. Clients receive live updates when new reports, comments, or upvotes occur nearby. Uses the Redis adapter so broadcasts work across multiple Fargate tasks.
 
 ## Dependencies
-Requires **Milestone 19** (Redis for pub/sub across Fargate tasks).
+- **Milestone 19** – Redis ElastiCache (pub/sub across tasks)
+- **Milestone 17** – ECS Fargate with ALB sticky sessions
+- Socket.io is already imported in `backend/api/src/index.ts` with a basic connection handler; this milestone fully configures it.
 
-## Implementation
+## Plan
 
-### 1. Socket.io Server Setup
-```javascript
-// backend/src/websocket/index.js
+### 1. Add Redis Adapter to Socket.io (`backend/api/src/lib/socket.ts`)
 
-const { Server } = require('socket.io');
-const { createAdapter } = require('@socket.io/redis-adapter');
-const { redis, getSubscriber } = require('../config/redis');
-const logger = require('../utils/logger');
-const { validateDeviceToken } = require('./auth');
+Create a dedicated module that configures the `io` instance with the Redis adapter and all event handling. The existing `index.ts` will import this instead of setting up Socket.io inline.
 
-let io;
+```typescript
+// backend/api/src/lib/socket.ts
 
-async function initWebSocket(httpServer) {
-  io = new Server(httpServer, {
-    cors: {
-      origin: '*', // Restrict in production
-      methods: ['GET', 'POST'],
-    },
-    pingTimeout: 60000,
-    pingInterval: 25000,
-  });
-  
-  // Redis adapter for horizontal scaling
-  const pubClient = redis();
-  const subClient = getSubscriber();
-  io.adapter(createAdapter(pubClient, subClient));
-  
-  // Authentication middleware
-  io.use(async (socket, next) => {
-    try {
-      const deviceId = socket.handshake.auth.deviceId;
-      if (!deviceId || deviceId.length < 32) {
-        return next(new Error('Invalid device ID'));
-      }
-      socket.deviceId = deviceId;
-      next();
-    } catch (error) {
-      next(new Error('Authentication failed'));
-    }
-  });
-  
-  // Connection handling
-  io.on('connection', handleConnection);
-  
-  logger.info('WebSocket server initialized');
-  
+import { Server as SocketServer, Socket } from 'socket.io';
+import { createAdapter } from '@socket.io/redis-adapter';
+import { createClient } from 'redis';
+import { config } from '../config';
+import { logger } from './logger';
+
+let io: SocketServer | null = null;
+
+const GRID_SIZE = 0.1; // ~11 km at the equator
+
+export function getIO(): SocketServer {
+  if (!io) throw new Error('Socket.io not initialised');
   return io;
 }
 
-function handleConnection(socket) {
-  logger.info(`Client connected: ${socket.id}, device: ${socket.deviceId.substring(0, 8)}...`);
-  
-  // Join location-based rooms
-  socket.on('subscribe:location', (data) => {
-    const { lat, lng, radius = 10000 } = data;
-    const roomId = getLocationRoom(lat, lng, radius);
-    socket.join(roomId);
-    socket.currentRoom = roomId;
-    logger.debug(`Socket ${socket.id} joined room ${roomId}`);
+export async function initSocket(httpServer: import('http').Server): Promise<SocketServer> {
+  io = new SocketServer(httpServer, {
+    cors: { origin: config.corsOrigin, methods: ['GET', 'POST'] },
+    pingTimeout: 60_000,
+    pingInterval: 25_000,
   });
-  
-  // Leave location room
+
+  const pubClient = createClient({
+    socket: { host: config.redis.host, port: config.redis.port },
+  });
+  const subClient = pubClient.duplicate();
+
+  await Promise.all([pubClient.connect(), subClient.connect()]);
+  io.adapter(createAdapter(pubClient, subClient));
+  logger.info('socket.io redis adapter attached');
+
+  io.use(authMiddleware);
+  io.on('connection', handleConnection);
+
+  return io;
+}
+
+function authMiddleware(socket: Socket, next: (err?: Error) => void) {
+  const deviceId = socket.handshake.auth?.deviceId as string | undefined;
+  if (!deviceId || deviceId.length < 1 || deviceId.length > 64) {
+    return next(new Error('Invalid device ID'));
+  }
+  socket.data.deviceId = deviceId;
+  next();
+}
+
+function handleConnection(socket: Socket) {
+  logger.info({ socketId: socket.id, deviceId: socket.data.deviceId }, 'ws client connected');
+
+  socket.on('subscribe:location', (data: { lat: number; lng: number; radius?: number }) => {
+    const room = locationRoom(data.lat, data.lng, data.radius ?? 10_000);
+    socket.join(room);
+    socket.data.locationRoom = room;
+    logger.debug({ socketId: socket.id, room }, 'joined location room');
+  });
+
   socket.on('unsubscribe:location', () => {
-    if (socket.currentRoom) {
-      socket.leave(socket.currentRoom);
-      socket.currentRoom = null;
+    if (socket.data.locationRoom) {
+      socket.leave(socket.data.locationRoom);
+      socket.data.locationRoom = null;
     }
   });
-  
-  // Subscribe to specific report (for comments)
-  socket.on('subscribe:report', (reportId) => {
+
+  socket.on('subscribe:report', (reportId: string) => {
     socket.join(`report:${reportId}`);
   });
-  
-  socket.on('unsubscribe:report', (reportId) => {
+
+  socket.on('unsubscribe:report', (reportId: string) => {
     socket.leave(`report:${reportId}`);
   });
-  
-  // Disconnect handling
+
   socket.on('disconnect', (reason) => {
-    logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`);
+    logger.info({ socketId: socket.id, reason }, 'ws client disconnected');
   });
 }
 
-// Generate room ID based on location grid
-function getLocationRoom(lat, lng, radius) {
-  // Create grid cells (roughly 10km squares)
-  const gridSize = 0.1; // ~11km at equator
-  const gridLat = Math.floor(lat / gridSize) * gridSize;
-  const gridLng = Math.floor(lng / gridSize) * gridSize;
+export function locationRoom(lat: number, lng: number, radius: number): string {
+  const gridLat = Math.floor(lat / GRID_SIZE) * GRID_SIZE;
+  const gridLng = Math.floor(lng / GRID_SIZE) * GRID_SIZE;
   return `location:${gridLat}:${gridLng}:${radius}`;
 }
 
-function getIO() {
-  return io;
-}
-
-module.exports = {
-  initWebSocket,
-  getIO,
-  getLocationRoom,
-};
-```
-
-### 2. Broadcast Service
-```javascript
-// backend/src/websocket/broadcastService.js
-
-const { getIO, getLocationRoom } = require('./index');
-const logger = require('../utils/logger');
-
-// Broadcast new report to nearby users
-function broadcastNewReport(report) {
-  const io = getIO();
-  if (!io) return;
-  
-  // Broadcast to all location rooms that might include this report
-  const rooms = getOverlappingRooms(report.latitude, report.longitude);
-  
-  const payload = {
-    type: 'NEW_REPORT',
-    data: {
-      id: report.id,
-      type: report.type,
-      latitude: report.latitude,
-      longitude: report.longitude,
-      thumbnailUrl: report.media?.[0]?.thumbnail_url,
-      createdAt: report.created_at,
-    },
-  };
-  
-  rooms.forEach(room => {
-    io.to(room).emit('report:new', payload);
-    logger.debug(`Broadcast new report to room ${room}`);
-  });
-}
-
-// Broadcast new comment to report subscribers
-function broadcastNewComment(comment, report) {
-  const io = getIO();
-  if (!io) return;
-  
-  const payload = {
-    type: 'NEW_COMMENT',
-    data: {
-      id: comment.id,
-      reportId: comment.report_id,
-      content: comment.content,
-      anonymousId: comment.anonymousId,
-      isReporter: comment.isReporter,
-      createdAt: comment.created_at,
-    },
-  };
-  
-  io.to(`report:${comment.report_id}`).emit('comment:new', payload);
-}
-
-// Broadcast upvote update
-function broadcastUpvoteUpdate(reportId, upvotes) {
-  const io = getIO();
-  if (!io) return;
-  
-  const payload = {
-    type: 'UPVOTE_UPDATE',
-    data: { reportId, upvotes },
-  };
-  
-  io.to(`report:${reportId}`).emit('report:upvote', payload);
-}
-
-// Broadcast media ready (after processing)
-function broadcastMediaReady(reportId, media) {
-  const io = getIO();
-  if (!io) return;
-  
-  const payload = {
-    type: 'MEDIA_READY',
-    data: {
-      reportId,
-      media: {
-        id: media.id,
-        url: media.url,
-        thumbnailUrl: media.thumbnail_url,
-        type: media.type,
-      },
-    },
-  };
-  
-  io.to(`report:${reportId}`).emit('media:ready', payload);
-}
-
-// Get all rooms that might contain a location
-function getOverlappingRooms(lat, lng) {
-  const gridSize = 0.1;
-  const rooms = [];
-  
-  // Include neighboring grid cells
+export function overlappingRooms(lat: number, lng: number): string[] {
+  const rooms = new Set<string>();
   for (let dLat = -1; dLat <= 1; dLat++) {
     for (let dLng = -1; dLng <= 1; dLng++) {
-      const gridLat = Math.floor((lat + dLat * gridSize) / gridSize) * gridSize;
-      const gridLng = Math.floor((lng + dLng * gridSize) / gridSize) * gridSize;
-      rooms.push(`location:${gridLat}:${gridLng}:10000`);
+      const gridLat = Math.floor((lat + dLat * GRID_SIZE) / GRID_SIZE) * GRID_SIZE;
+      const gridLng = Math.floor((lng + dLng * GRID_SIZE) / GRID_SIZE) * GRID_SIZE;
+      rooms.add(`location:${gridLat}:${gridLng}:10000`);
     }
   }
-  
-  return [...new Set(rooms)];
+  return [...rooms];
 }
-
-module.exports = {
-  broadcastNewReport,
-  broadcastNewComment,
-  broadcastUpvoteUpdate,
-  broadcastMediaReady,
-};
 ```
 
-### 3. Update Entry Point
-```javascript
-// backend/src/index.js (updated)
+### 2. Broadcast Helper (`backend/api/src/lib/broadcast.ts`)
 
-const http = require('http');
-const app = require('./app');
-const { initDatabase } = require('./config/database');
-const { initRedis } = require('./config/redis');
-const { initWebSocket } = require('./websocket');
-const logger = require('./utils/logger');
+Thin helper functions that route handlers call after mutations. Each function is fire-and-forget so the HTTP response is never delayed.
 
-const PORT = process.env.PORT || 3000;
+```typescript
+// backend/api/src/lib/broadcast.ts
 
-async function start() {
+import { getIO, overlappingRooms } from './socket';
+import { logger } from './logger';
+
+export function broadcastNewReport(report: {
+  id: string;
+  type: string;
+  lat: number;
+  lng: number;
+  created_at: Date;
+}) {
   try {
-    await initDatabase();
-    await initRedis();
-    
-    const server = http.createServer(app);
-    
-    // Initialize WebSocket
-    await initWebSocket(server);
-    
-    server.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT}`);
-    });
-    
-    // Graceful shutdown
-    process.on('SIGTERM', async () => {
-      logger.info('SIGTERM received');
-      server.close(() => process.exit(0));
-    });
-  } catch (error) {
-    logger.error('Failed to start:', error);
-    process.exit(1);
+    const io = getIO();
+    const rooms = overlappingRooms(report.lat, report.lng);
+    const payload = {
+      id: report.id,
+      type: report.type,
+      lat: report.lat,
+      lng: report.lng,
+      created_at: report.created_at,
+    };
+    for (const room of rooms) {
+      io.to(room).emit('report:new', payload);
+    }
+  } catch (err) {
+    logger.error({ err }, 'broadcast report:new failed');
   }
 }
 
-start();
-```
+export function broadcastNewComment(comment: {
+  id: string;
+  report_id: string;
+  device_id: string;
+  content: string;
+  created_at: Date;
+}) {
+  try {
+    const io = getIO();
+    io.to(`report:${comment.report_id}`).emit('comment:new', {
+      id: comment.id,
+      report_id: comment.report_id,
+      content: comment.content,
+      created_at: comment.created_at,
+    });
+  } catch (err) {
+    logger.error({ err }, 'broadcast comment:new failed');
+  }
+}
 
-### 4. Integration with Services
-```javascript
-// backend/src/services/reportService.js (additions)
+export function broadcastUpvote(reportId: string, upvoted: boolean) {
+  try {
+    const io = getIO();
+    io.to(`report:${reportId}`).emit('report:upvote', { report_id: reportId, upvoted });
+  } catch (err) {
+    logger.error({ err }, 'broadcast report:upvote failed');
+  }
+}
 
-const { broadcastNewReport } = require('../websocket/broadcastService');
-
-async function createReport(data) {
-  // ... existing code ...
-  
-  const report = await reportRepository.createWithLocation(data);
-  
-  // Enrich and broadcast
-  const enrichedReport = await getReportById(report.id);
-  broadcastNewReport(enrichedReport);
-  
-  return report;
+export function broadcastMediaReady(reportId: string, media: {
+  id: string;
+  url: string;
+  thumbnail_url: string | null;
+  type: string;
+}) {
+  try {
+    const io = getIO();
+    io.to(`report:${reportId}`).emit('media:ready', { report_id: reportId, ...media });
+  } catch (err) {
+    logger.error({ err }, 'broadcast media:ready failed');
+  }
 }
 ```
 
-```javascript
-// backend/src/services/commentService.js (additions)
+### 3. Update Entry Point (`backend/api/src/index.ts`)
 
-const { broadcastNewComment } = require('../websocket/broadcastService');
+Replace the inline Socket.io setup with the new `initSocket` function. The HTTP server and graceful shutdown logic stay the same.
 
-async function createComment(data) {
-  // ... existing code ...
-  
-  const comment = await commentRepository.create(data);
-  broadcastNewComment(enrichedComment, report);
-  
-  return enrichedComment;
-}
+```typescript
+// backend/api/src/index.ts (updated)
+
+import { createServer } from 'http';
+import app from './app';
+import { config } from './config';
+import { pool } from './lib/db';
+import { disconnect as disconnectRedis } from './lib/redis';
+import { logger } from './lib/logger';
+import { initSocket } from './lib/socket';
+
+const httpServer = createServer(app);
+
+(async () => {
+  const io = await initSocket(httpServer);
+
+  httpServer.listen(config.port, () => {
+    logger.info({ port: config.port, env: config.nodeEnv }, 'CrimeReport API started');
+  });
+
+  function shutdown(signal: string) {
+    logger.info({ signal }, 'shutdown signal received');
+
+    httpServer.close(async () => {
+      logger.info('http server closed');
+      io.close(async () => {
+        logger.info('socket.io closed');
+        await pool.end().catch((err) => logger.error({ err }, 'error closing pg pool'));
+        await disconnectRedis().catch((err) => logger.error({ err }, 'error closing redis'));
+        process.exit(0);
+      });
+    });
+
+    setTimeout(() => {
+      logger.error('graceful shutdown timed out, forcing exit');
+      process.exit(1);
+    }, 10_000);
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+})();
+
+export { app, httpServer };
+```
+
+### 4. Integrate Broadcasts into Route Handlers
+
+Add broadcast calls to the existing route handlers in `backend/api/src/routes/reports.ts`. No service layer or controller class needed — the broadcasts are one-liners added after the database mutation.
+
+```typescript
+// In backend/api/src/routes/reports.ts — add import at the top:
+import * as broadcast from '../lib/broadcast';
+
+// After creating a report (inside the POST / handler):
+router.post('/', validate(createReportSchema), async (req: Request, res: Response) => {
+  // ... existing device checks and create logic ...
+  const report = await reportModel.create({ device_id, type, description, lat, lng, address });
+  await deviceActivity.incrementReportCount(device_id);
+
+  broadcast.broadcastNewReport(report);
+
+  res.status(201).json(report);
+});
+
+// After toggling an upvote (inside the POST /:id/upvote handler):
+router.post('/:id/upvote', validate(upvoteSchema), async (req: Request, res: Response) => {
+  // ... existing logic ...
+  const upvoted = await upvoteModel.toggle(id, device_id);
+
+  broadcast.broadcastUpvote(id, upvoted);
+
+  res.json({ upvoted });
+});
+
+// After creating a comment (inside the POST /:id/comments handler):
+router.post('/:id/comments', validate(createCommentSchema), async (req: Request, res: Response) => {
+  // ... existing logic ...
+  const comment = await commentModel.createForReport({ report_id: id, device_id, content });
+
+  broadcast.broadcastNewComment(comment);
+
+  res.status(201).json(comment);
+});
 ```
 
 ### 5. ALB Sticky Sessions
-For WebSocket to work with multiple Fargate tasks, ensure ALB has sticky sessions enabled (done in Milestone 17).
 
-### 6. Client Connection Example
+WebSocket long-polling fallback requires sticky sessions on the ALB target group. The ECS/Fargate stack (Milestone 17) should enable `stickiness` on the target group with a duration of 86 400 s. Once the WebSocket upgrade completes, the TCP connection stays pinned regardless of stickiness settings.
+
+### 6. Client Connection Example (Flutter Preview)
+
 ```dart
-// Flutter client connection (preview for Milestone 26)
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
 final socket = IO.io('wss://api.reportcrime.app', <String, dynamic>{
@@ -313,7 +299,6 @@ final socket = IO.io('wss://api.reportcrime.app', <String, dynamic>{
 });
 
 socket.on('connect', (_) {
-  // Subscribe to location
   socket.emit('subscribe:location', {
     'lat': 37.7749,
     'lng': -122.4194,
@@ -321,39 +306,44 @@ socket.on('connect', (_) {
   });
 });
 
-socket.on('report:new', (data) {
-  // Handle new report
-  print('New report nearby: ${data['data']['id']}');
-});
+socket.on('report:new', (data) => print('New report: ${data['id']}'));
+socket.on('comment:new', (data) => print('New comment: ${data['id']}'));
+socket.on('report:upvote', (data) => print('Upvote: ${data['report_id']}'));
 ```
 
 ## WebSocket Events
 
 | Event | Direction | Description |
 |-------|-----------|-------------|
-| `subscribe:location` | Client → Server | Join location room |
-| `unsubscribe:location` | Client → Server | Leave location room |
-| `subscribe:report` | Client → Server | Watch specific report |
-| `report:new` | Server → Client | New report in area |
-| `comment:new` | Server → Client | New comment on report |
-| `report:upvote` | Server → Client | Upvote count changed |
-| `media:ready` | Server → Client | Video processing complete |
+| `subscribe:location` | Client → Server | Join a geo-grid room |
+| `unsubscribe:location` | Client → Server | Leave geo-grid room |
+| `subscribe:report` | Client → Server | Watch a specific report for comments/upvotes |
+| `unsubscribe:report` | Client → Server | Stop watching a report |
+| `report:new` | Server → Client | New report created in nearby area |
+| `comment:new` | Server → Client | New comment on a watched report |
+| `report:upvote` | Server → Client | Upvote toggled on a watched report |
+| `media:ready` | Server → Client | Media processing complete for a report |
 
-## Deliverable Checklist
-- [ ] Socket.io server initialized with HTTP server
-- [ ] Redis adapter for multi-task scaling
-- [ ] Client authentication via device ID
-- [ ] Location-based room subscriptions
-- [ ] Report-specific room subscriptions
-- [ ] `report:new` broadcasts to nearby users
-- [ ] `comment:new` broadcasts to report watchers
-- [ ] `report:upvote` broadcasts update
-- [ ] `media:ready` notifies when video processed
-- [ ] Reconnection handling works
-- [ ] Load tested with multiple connections
+## API Endpoints
+No new HTTP endpoints. All real-time communication uses the Socket.io WebSocket transport on the existing HTTP server.
 
-## Files (4 total)
-1. `backend/src/websocket/index.js` - Create
-2. `backend/src/websocket/broadcastService.js` - Create
-3. `backend/src/index.js` - Update
-4. `backend/src/services/*.js` - Update to broadcast
+## Testing Plan
+- Unit tests for `locationRoom` and `overlappingRooms` grid math
+- Unit tests for each `broadcast.*` function (mock `getIO`, verify `.to().emit()` calls)
+- Integration test: connect two Socket.io clients, subscribe one to a location room, create a report via HTTP, assert the subscribed client receives `report:new`
+- Integration test: subscribe to a report room, post a comment, assert `comment:new` received
+- Integration test: verify auth middleware rejects connections with missing/invalid device ID
+- Load test: 500+ concurrent connections with Redis adapter across 2 server instances
+
+## Notes
+- The Redis adapter creates its own pub/sub clients separate from the application Redis client in `lib/redis.ts`. This avoids blocking the main client with `SUBSCRIBE`.
+- Grid size of 0.1° (~11 km) is a reasonable default. Overlapping 3×3 neighbor cells ensures a report at a grid boundary is still broadcast to nearby rooms.
+- `broadcast.*` calls are fire-and-forget inside route handlers. A Socket.io failure never blocks the HTTP response.
+- The `@socket.io/redis-adapter` package must be added to `package.json`.
+
+## Files (3 new, 2 updated)
+1. `backend/api/src/lib/socket.ts` – **Create** – Socket.io init, Redis adapter, auth, rooms
+2. `backend/api/src/lib/broadcast.ts` – **Create** – Broadcast helper functions
+3. `backend/api/src/index.ts` – **Update** – Replace inline Socket.io setup with `initSocket`
+4. `backend/api/src/routes/reports.ts` – **Update** – Add `broadcast.*` calls after mutations
+5. `backend/api/package.json` – **Update** – Add `@socket.io/redis-adapter` dependency

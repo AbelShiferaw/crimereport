@@ -1,70 +1,72 @@
 # Milestone 25: Flutter ↔ REST API
 
+## Status
+Not Started
+
 ## Goal
-Connect the Flutter app to the live backend REST API, replacing mock data with real API calls.
+Replace `MockDataService` with real REST API calls using **dio** (already in pubspec). Introduce an `ApiClient` service layer and per-feature repositories, update existing Riverpod providers to fetch from the live backend, and add proper error/loading state handling across the feed, map, and submit features.
 
 ## Dependencies
-Requires **Milestone 13** (Flutter app complete) and **Milestone 20-22** (API endpoints working).
+- **Milestone 13** – Flutter app feature-complete with mock data
+- **Milestone 17** – ECS Fargate backend deployed
+- **Milestone 15** – Database migrations applied (reports, comments, media, upvotes tables)
 
-## Implementation
+## Plan
 
-### 1. API Client Setup
+### 1. API Client (shared service)
+
+Create a centralized dio wrapper that every repository uses. Reads `apiBaseUrl` from `AppConstants` (already defined) and attaches the anonymous device ID header.
+
 ```dart
 // lib/shared/data/api/api_client.dart
 
+import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:crimereport/core/constants/app_constants.dart';
+import 'package:crimereport/features/settings/providers/settings_providers.dart';
 
 class ApiClient {
-  late final Dio _dio;
-  
+  late final Dio dio;
+
   ApiClient({required String baseUrl, required String deviceId}) {
-    _dio = Dio(BaseOptions(
+    dio = Dio(BaseOptions(
       baseUrl: baseUrl,
-      connectTimeout: Duration(seconds: 10),
-      receiveTimeout: Duration(seconds: 30),
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 30),
       headers: {
-        'Content-Type': 'application/json',
+        HttpHeaders.contentTypeHeader: 'application/json',
         'X-Device-ID': deviceId,
       },
     ));
-    
-    // Request/response logging
-    _dio.interceptors.add(LogInterceptor(
-      requestBody: true,
-      responseBody: true,
-    ));
-    
-    // Error handling interceptor
-    _dio.interceptors.add(InterceptorsWrapper(
+
+    if (kDebugMode) {
+      dio.interceptors.add(LogInterceptor(requestBody: true, responseBody: true));
+    }
+
+    dio.interceptors.add(InterceptorsWrapper(
       onError: (error, handler) {
-        // Transform errors
         if (error.response?.statusCode == 429) {
-          throw RateLimitException();
+          handler.reject(DioException(
+            requestOptions: error.requestOptions,
+            error: const RateLimitException(),
+            type: DioExceptionType.badResponse,
+          ));
+          return;
         }
         handler.next(error);
       },
     ));
   }
-  
-  Future<T> get<T>(String path, {Map<String, dynamic>? queryParams}) async {
-    final response = await _dio.get(path, queryParameters: queryParams);
-    return response.data['data'] as T;
-  }
-  
-  Future<T> post<T>(String path, {Map<String, dynamic>? data}) async {
-    final response = await _dio.post(path, data: data);
-    return response.data['data'] as T;
-  }
-  
-  Future<void> delete(String path) async {
-    await _dio.delete(path);
-  }
 }
 
-// Provider
+class RateLimitException implements Exception {
+  const RateLimitException();
+}
+
 final apiClientProvider = Provider<ApiClient>((ref) {
-  final deviceId = ref.watch(deviceIdProvider).value ?? '';
+  final deviceId = ref.watch(anonymousIdProvider).valueOrNull ?? '';
   return ApiClient(
     baseUrl: AppConstants.apiBaseUrl,
     deviceId: deviceId,
@@ -72,53 +74,71 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 });
 ```
 
-### 2. Report Repository (API Implementation)
+### 2. Report Repository
+
+Maps to the real backend endpoints under `/api/v1/reports`. The backend returns `{ data: [...], meta: {...} }` for list endpoints and flat JSON for single-resource endpoints.
+
 ```dart
 // lib/features/feed/data/repositories/report_repository.dart
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:crimereport/shared/data/api/api_client.dart';
+import 'package:crimereport/features/feed/data/models/report.dart';
 
 class ReportRepository {
   final ApiClient _api;
-  
   ReportRepository(this._api);
-  
-  Future<List<Report>> getNearbyReports(double lat, double lng, {int radius = 10000}) async {
-    final data = await _api.get<List<dynamic>>(
-      '/api/v1/reports/nearby',
-      queryParams: {'lat': lat, 'lng': lng, 'radius': radius},
-    );
-    return data.map((json) => Report.fromJson(json)).toList();
+
+  /// GET /api/v1/reports?lat=&lng=&radius=&limit=&offset=
+  Future<List<Report>> getNearbyReports({
+    required double lat,
+    required double lng,
+    int radius = 10000,
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final response = await _api.dio.get('/api/v1/reports', queryParameters: {
+      'lat': lat,
+      'lng': lng,
+      'radius': radius,
+      'limit': limit,
+      'offset': offset,
+    });
+    final items = response.data['data'] as List<dynamic>;
+    return items.map((json) => Report.fromJson(json as Map<String, dynamic>)).toList();
   }
-  
-  Future<List<Report>> getReportsAtLocation(double lat, double lng) async {
-    final data = await _api.get<List<dynamic>>(
-      '/api/v1/reports/location',
-      queryParams: {'lat': lat, 'lng': lng},
-    );
-    return data.map((json) => Report.fromJson(json)).toList();
-  }
-  
+
+  /// GET /api/v1/reports/:id
   Future<Report> getReport(String id) async {
-    final data = await _api.get<Map<String, dynamic>>('/api/v1/reports/$id');
-    return Report.fromJson(data);
+    final response = await _api.dio.get('/api/v1/reports/$id');
+    return Report.fromJson(response.data as Map<String, dynamic>);
   }
-  
-  Future<Report> createReport(CreateReportRequest request) async {
-    final data = await _api.post<Map<String, dynamic>>(
-      '/api/v1/reports',
-      data: request.toJson(),
-    );
-    return Report.fromJson(data);
+
+  /// POST /api/v1/reports
+  Future<Report> createReport({
+    required String type,
+    required String description,
+    required double lat,
+    required double lng,
+    String? address,
+  }) async {
+    final response = await _api.dio.post('/api/v1/reports', data: {
+      'device_id': _api.dio.options.headers['X-Device-ID'],
+      'type': type,
+      'description': description,
+      'lat': lat,
+      'lng': lng,
+      if (address != null) 'address': address,
+    });
+    return Report.fromJson(response.data as Map<String, dynamic>);
   }
-  
-  Future<UpvoteResult> upvoteReport(String id) async {
-    final data = await _api.post<Map<String, dynamic>>('/api/v1/reports/$id/upvote');
-    return UpvoteResult.fromJson(data);
-  }
-  
-  Future<void> flagReport(String id, String reason) async {
-    await _api.post('/api/v1/reports/$id/flag', data: {'reason': reason});
+
+  /// POST /api/v1/reports/:id/upvote — returns { upvoted: bool }
+  Future<bool> toggleUpvote(String reportId) async {
+    final response = await _api.dio.post('/api/v1/reports/$reportId/upvote', data: {
+      'device_id': _api.dio.options.headers['X-Device-ID'],
+    });
+    return response.data['upvoted'] as bool;
   }
 }
 
@@ -127,235 +147,279 @@ final reportRepositoryProvider = Provider<ReportRepository>((ref) {
 });
 ```
 
-### 3. Update Providers to Use API
-```dart
-// lib/shared/providers/report_providers.dart
+### 3. Comment Repository
 
-final nearbyReportsProvider = FutureProvider.family<List<Report>, LatLng>((ref, location) async {
-  final repo = ref.watch(reportRepositoryProvider);
-  return repo.getNearbyReports(location.latitude, location.longitude);
-});
+Matches the nested backend routes under `/api/v1/reports/:id/comments` and the standalone `/api/v1/comments/:id/flag`.
 
-final reportProvider = FutureProvider.family<Report, String>((ref, id) async {
-  final repo = ref.watch(reportRepositoryProvider);
-  return repo.getReport(id);
-});
-
-// Mutation providers
-final upvoteReportProvider = Provider((ref) {
-  return (String reportId) async {
-    final repo = ref.read(reportRepositoryProvider);
-    final result = await repo.upvoteReport(reportId);
-    
-    // Invalidate to refresh
-    ref.invalidate(nearbyReportsProvider);
-    
-    return result;
-  };
-});
-```
-
-### 4. Comment Repository
 ```dart
 // lib/features/feed/data/repositories/comment_repository.dart
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:crimereport/shared/data/api/api_client.dart';
+import 'package:crimereport/features/feed/data/models/comment.dart';
+
 class CommentRepository {
   final ApiClient _api;
-  
   CommentRepository(this._api);
-  
-  Future<List<Comment>> getComments(String reportId) async {
-    final data = await _api.get<List<dynamic>>('/api/v1/comments/report/$reportId');
-    return data.map((json) => Comment.fromJson(json)).toList();
+
+  /// GET /api/v1/reports/:reportId/comments?limit=&offset=
+  Future<List<Comment>> getComments(String reportId, {int limit = 50, int offset = 0}) async {
+    final response = await _api.dio.get(
+      '/api/v1/reports/$reportId/comments',
+      queryParameters: {'limit': limit, 'offset': offset},
+    );
+    final items = response.data['data'] as List<dynamic>;
+    return items.map((json) => Comment.fromJson(json as Map<String, dynamic>)).toList();
   }
-  
+
+  /// POST /api/v1/reports/:reportId/comments
   Future<Comment> createComment(String reportId, String content) async {
-    final data = await _api.post<Map<String, dynamic>>(
-      '/api/v1/comments',
-      data: {'report_id': reportId, 'content': content},
-    );
-    return Comment.fromJson(data);
+    final response = await _api.dio.post('/api/v1/reports/$reportId/comments', data: {
+      'device_id': _api.dio.options.headers['X-Device-ID'],
+      'content': content,
+    });
+    return Comment.fromJson(response.data as Map<String, dynamic>);
   }
-  
-  Future<UpvoteResult> upvoteComment(String id) async {
-    final data = await _api.post<Map<String, dynamic>>('/api/v1/comments/$id/upvote');
-    return UpvoteResult.fromJson(data);
-  }
-  
-  Future<void> deleteComment(String id) async {
-    await _api.delete('/api/v1/comments/$id');
+
+  /// POST /api/v1/comments/:id/flag
+  Future<bool> flagComment(String commentId) async {
+    final response = await _api.dio.post('/api/v1/comments/$commentId/flag', data: {
+      'device_id': _api.dio.options.headers['X-Device-ID'],
+    });
+    return response.data['flagged'] as bool;
   }
 }
+
+final commentRepositoryProvider = Provider<CommentRepository>((ref) {
+  return CommentRepository(ref.watch(apiClientProvider));
+});
 ```
 
-### 5. Media Upload Service
+### 4. Update Feed Providers (replace MockDataService)
+
+Modify `lib/features/feed/providers/feed_providers.dart` — swap `MockDataService` calls with `ReportRepository` / `CommentRepository`. The providers keep the same names so all existing UI code stays unchanged.
+
 ```dart
-// lib/features/submit/data/services/upload_service.dart
+// lib/features/feed/providers/feed_providers.dart  (updated sections)
 
-import 'package:dio/dio.dart';
+import 'package:crimereport/features/feed/data/repositories/report_repository.dart';
+import 'package:crimereport/features/feed/data/repositories/comment_repository.dart';
+import 'package:crimereport/features/map/providers/map_providers.dart';
 
-class UploadService {
-  final ApiClient _api;
-  
-  UploadService(this._api);
-  
-  Future<UploadResult> uploadMedia(String filePath, {
-    void Function(int, int)? onProgress,
-  }) async {
-    final file = File(filePath);
-    final filename = path.basename(filePath);
-    final contentType = _getContentType(filename);
-    final fileSize = await file.length();
-    
-    // 1. Get presigned URL
-    final presigned = await _api.post<Map<String, dynamic>>(
-      '/api/v1/uploads/presigned-url',
-      data: {
-        'filename': filename,
-        'contentType': contentType,
-        'fileSize': fileSize,
-      },
-    );
-    
-    // 2. Upload to S3
-    final uploadDio = Dio();
-    await uploadDio.put(
-      presigned['uploadUrl'],
-      data: file.openRead(),
-      options: Options(
-        headers: {
-          'Content-Type': contentType,
-          'Content-Length': fileSize,
-        },
-      ),
-      onSendProgress: onProgress,
-    );
-    
-    return UploadResult(
-      uploadId: presigned['uploadId'],
-      key: presigned['key'],
-    );
+/// Feed reports — fetched from API based on user location, filtered by active crime types.
+final feedReportsProvider = FutureProvider.autoDispose<List<Report>>((ref) async {
+  final activeFilters = ref.watch(crimeTypeFiltersProvider);
+  final repo = ref.watch(reportRepositoryProvider);
+  final position = ref.watch(userLocationProvider);
+
+  if (position == null) return [];
+
+  final reports = await repo.getNearbyReports(
+    lat: position.latitude,
+    lng: position.longitude,
+  );
+
+  if (activeFilters.length == ReportType.values.length) return reports;
+  return reports.where((r) => activeFilters.contains(r.type)).toList();
+});
+
+/// Comments for a report — fetched from API.
+final commentsProvider =
+    FutureProvider.autoDispose.family<List<Comment>, String>((ref, reportId) {
+  final repo = ref.watch(commentRepositoryProvider);
+  return repo.getComments(reportId);
+});
+
+/// Toggle upvote via API, then refresh feed.
+Future<void> toggleUpvote(WidgetRef ref, String reportId) async {
+  final repo = ref.read(reportRepositoryProvider);
+  final upvoted = await repo.toggleUpvote(reportId);
+
+  final notifier = ref.read(upvotedReportsProvider.notifier);
+  final current = notifier.state;
+  if (upvoted) {
+    notifier.state = {...current, reportId};
+  } else {
+    notifier.state = {...current}..remove(reportId);
   }
-  
-  Future<Media> completeUpload(String uploadId, String reportId) async {
-    final data = await _api.post<Map<String, dynamic>>(
-      '/api/v1/uploads/complete',
-      data: {'uploadId': uploadId, 'reportId': reportId},
-    );
-    return Media.fromJson(data);
-  }
-  
-  String _getContentType(String filename) {
-    final ext = path.extension(filename).toLowerCase();
-    switch (ext) {
-      case '.mp4': return 'video/mp4';
-      case '.mov': return 'video/quicktime';
-      case '.jpg':
-      case '.jpeg': return 'image/jpeg';
-      case '.png': return 'image/png';
-      default: throw Exception('Unsupported file type');
-    }
-  }
+
+  ref.invalidate(feedReportsProvider);
 }
 ```
 
-### 6. Error Handling UI
+### 5. Update Map Providers (replace MockDataService)
+
+Modify `lib/features/map/providers/map_providers.dart` — switch `mapReportsProvider` from synchronous mock data to an async API fetch.
+
+```dart
+// lib/features/map/providers/map_providers.dart  (updated section)
+
+import 'package:crimereport/features/feed/data/repositories/report_repository.dart';
+
+/// Map reports — fetched from API based on user location, filtered by crime type.
+final mapReportsProvider = FutureProvider<List<Report>>((ref) async {
+  final activeFilters = ref.watch(crimeTypeFiltersProvider);
+  final repo = ref.watch(reportRepositoryProvider);
+  final position = ref.watch(userLocationProvider);
+
+  if (position == null) return [];
+
+  final allReports = await repo.getNearbyReports(
+    lat: position.latitude,
+    lng: position.longitude,
+    radius: AppConstants.defaultRadiusMeters,
+  );
+
+  if (activeFilters.length == ReportType.values.length) return allReports;
+  return allReports.where((r) => activeFilters.contains(r.type)).toList();
+});
+```
+
+> **Note:** `mapReportsProvider` changes from `Provider<List<Report>>` (sync) to `FutureProvider<List<Report>>` (async). The map screen will need to handle `AsyncValue` — use `.when(data:, loading:, error:)`.
+
+### 6. Error Handling Widget
+
+A reusable widget for wrapping `AsyncValue` consumers with consistent loading/error UX. Displays shimmer placeholders during loading and a retry button on errors.
+
 ```dart
 // lib/shared/widgets/api_error_handler.dart
 
-class ApiErrorHandler extends ConsumerWidget {
-  final AsyncValue<dynamic> asyncValue;
-  final Widget Function(dynamic data) builder;
+import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:crimereport/shared/data/api/api_client.dart';
+
+class ApiErrorView extends StatelessWidget {
+  final Object error;
   final VoidCallback onRetry;
-  
+
+  const ApiErrorView({super.key, required this.error, required this.onRetry});
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return asyncValue.when(
-      data: builder,
-      loading: () => Center(child: CircularProgressIndicator()),
-      error: (error, stack) => ErrorView(
-        message: _getErrorMessage(error),
-        onRetry: onRetry,
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_rounded, size: 48, color: Colors.grey[600]),
+            const SizedBox(height: 16),
+            Text(
+              _messageFor(error),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[400], fontSize: 14),
+            ),
+            const SizedBox(height: 24),
+            OutlinedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
       ),
     );
   }
-  
-  String _getErrorMessage(Object error) {
+
+  static String _messageFor(Object error) {
     if (error is DioException) {
       switch (error.type) {
         case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
           return 'Connection timed out. Check your internet.';
         case DioExceptionType.receiveTimeout:
           return 'Server took too long to respond.';
+        case DioExceptionType.connectionError:
+          return 'No internet connection.';
         default:
-          return error.response?.data?['error']?['message'] ?? 'Something went wrong';
+          final msg = error.response?.data;
+          if (msg is Map && msg['error'] != null) return msg['error'].toString();
+          return 'Something went wrong.';
       }
     }
     if (error is RateLimitException) {
       return 'Too many requests. Please wait a moment.';
     }
-    return 'An unexpected error occurred';
+    return 'An unexpected error occurred.';
   }
 }
 ```
 
-### 7. Update Feed Screen
-```dart
-// lib/features/feed/presentation/feed_screen.dart (updated)
+### 7. Extend ReportStatus Enum
 
-class FeedScreen extends ConsumerWidget {
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final location = ref.watch(userLocationProvider);
-    
-    return location.when(
-      data: (pos) {
-        final reports = ref.watch(nearbyReportsProvider(LatLng(pos.latitude, pos.longitude)));
-        
-        return ApiErrorHandler(
-          asyncValue: reports,
-          onRetry: () => ref.invalidate(nearbyReportsProvider),
-          builder: (data) => FeedVideoList(reports: data),
-        );
-      },
-      loading: () => FeedLoadingSkeleton(),
-      error: (e, _) => ErrorView(message: 'Could not get location'),
-    );
-  }
+The backend uses statuses `pending`, `uploading`, `processing`, `active`, `failed`, `removed` for the media upload lifecycle. The current Flutter `ReportStatus` enum only has `pending`, `verified`, `flagged`, `removed`. Update it to match.
+
+```dart
+// lib/core/constants/enums.dart  (updated ReportStatus)
+
+enum ReportStatus {
+  pending('Pending'),
+  uploading('Uploading'),
+  processing('Processing'),
+  active('Active'),
+  failed('Failed'),
+  flagged('Flagged'),
+  removed('Removed');
+
+  const ReportStatus(this.displayName);
+  final String displayName;
 }
 ```
 
-## Configuration
-```dart
-// lib/core/constants/app_constants.dart
+### 8. Device ID Header via Interceptor
 
-class AppConstants {
-  static const String apiBaseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'https://api.reportcrime.app',
-  );
+The `anonymousIdProvider` is async (reads from SharedPreferences). On first app launch, the device ID won't be ready immediately. Add logic so `ApiClient` updates its header once the ID resolves.
+
+```dart
+// In api_client.dart — alternative: expose a method to set device ID later
+
+void updateDeviceId(String deviceId) {
+  dio.options.headers['X-Device-ID'] = deviceId;
 }
 ```
 
-## Deliverable Checklist
-- [ ] ApiClient configured with device ID header
-- [ ] ReportRepository fetches from real API
-- [ ] Feed shows real nearby reports
-- [ ] Map shows real crime markers
-- [ ] Upvote sends to API and updates UI
-- [ ] CommentRepository fetches/creates comments
-- [ ] Media upload with progress indicator
-- [ ] Error states handled gracefully
-- [ ] Loading states show skeletons
-- [ ] Pull-to-refresh works
-- [ ] Rate limit errors shown to user
+Then in `apiClientProvider`, listen for changes:
 
-## Files (8 total)
-1. `lib/shared/data/api/api_client.dart` - Create
-2. `lib/features/feed/data/repositories/report_repository.dart` - Create
-3. `lib/features/feed/data/repositories/comment_repository.dart` - Create
-4. `lib/features/submit/data/services/upload_service.dart` - Create
-5. `lib/shared/providers/report_providers.dart` - Update
-6. `lib/shared/widgets/api_error_handler.dart` - Create
-7. `lib/features/feed/presentation/feed_screen.dart` - Update
-8. `lib/core/constants/app_constants.dart` - Update
+```dart
+final apiClientProvider = Provider<ApiClient>((ref) {
+  final client = ApiClient(baseUrl: AppConstants.apiBaseUrl, deviceId: '');
+  ref.listen<AsyncValue<String>>(anonymousIdProvider, (_, next) {
+    final id = next.valueOrNull;
+    if (id != null) client.updateDeviceId(id);
+  }, fireImmediately: true);
+  return client;
+});
+```
+
+## Testing Plan
+
+- **Unit tests** for `ReportRepository` and `CommentRepository` — mock dio adapter, verify correct URL/params/body for each endpoint, verify `Report.fromJson` / `Comment.fromJson` parsing against real API response shapes.
+- **Unit tests** for `ApiClient` — verify interceptor transforms 429 into `RateLimitException`.
+- **Provider tests** — verify `feedReportsProvider` calls repository and applies crime-type filters.
+- **Widget tests** — verify `ApiErrorView` shows correct messages for timeout, connection error, rate limit.
+- **Integration test** — full flow: app launches → feed loads from API → upvote sends POST → feed refreshes.
+
+## Notes
+
+- **What gets replaced:** `MockDataService` is no longer called anywhere. The class and `SampleData` can remain for reference/testing but are disconnected from the provider graph.
+- **API prefix:** All backend routes live under `/api/v1` (see `app.ts` line 24). Reports at `/api/v1/reports`, comments nested at `/api/v1/reports/:id/comments`, flag at `/api/v1/comments/:id/flag`.
+- **Response shapes:** List endpoints return `{ data: [...], meta: {...} }`. Single-resource endpoints (GET `/:id`, POST `/`) return the object directly.
+- **`mapReportsProvider` becomes async:** This is a breaking change for `MapScreen` and `MapMarkerManager` which currently consume a synchronous `Provider<List<Report>>`. They must be updated to handle `AsyncValue`.
+- **`locationFeedReportsProvider`** also needs to switch from `MockDataService.instance.getNearbyReports(...)` to `reportRepositoryProvider`. Since it's a synchronous `Provider.family`, it will need to become a `FutureProvider.family`.
+- **No new dependencies needed** — `dio: ^5.4.0` is already in pubspec.yaml.
+
+## Files
+
+| # | Path | Action |
+|---|------|--------|
+| 1 | `lib/shared/data/api/api_client.dart` | Create |
+| 2 | `lib/features/feed/data/repositories/report_repository.dart` | Create |
+| 3 | `lib/features/feed/data/repositories/comment_repository.dart` | Create |
+| 4 | `lib/shared/widgets/api_error_handler.dart` | Create |
+| 5 | `lib/features/feed/providers/feed_providers.dart` | Modify — replace MockDataService with repositories |
+| 6 | `lib/features/map/providers/map_providers.dart` | Modify — replace MockDataService, make async |
+| 7 | `lib/core/constants/enums.dart` | Modify — extend ReportStatus |
+| 8 | `lib/features/map/presentation/map_screen.dart` | Modify — handle AsyncValue from mapReportsProvider |
+| 9 | `lib/features/map/presentation/map_marker_manager.dart` | Modify — handle AsyncValue |
+| 10 | `lib/features/map/presentation/location_feed_screen.dart` | Modify — use async locationFeedReportsProvider |

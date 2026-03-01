@@ -1,207 +1,231 @@
----
-name: Milestone 4 Feed UI
-overview: Add TikTok-style overlay UI including side action buttons, info bar, double-tap heart animation, video progress bar, and long-press fast-forward gesture.
-todos:
-  - id: m4-gesture-controls
-    content: Create VideoGestureControls widget for long-press 2x fast-forward
-    status: pending
-  - id: m4-progress-bar
-    content: Create VideoProgressBar widget with seek functionality
-    status: pending
-  - id: m4-action-buttons
-    content: Create FeedActionButtons widget (upvote, comment, flag)
-    status: pending
-  - id: m4-info-bar
-    content: Create FeedInfoBar widget with crime badge and description
-    status: pending
-  - id: m4-heart-animation
-    content: Create DoubleTapLikeOverlay with heart animation
-    status: pending
-  - id: m4-integrate
-    content: Update FeedVideoItem to integrate all overlay components
-    status: pending
----
+# Milestone 4: TikTok Feed - Overlay UI
 
-# Milestone 4: TikTok Feed - Overlay UI (Enhanced)
+## Status
+Completed
 
 ## Goal
-
-Transform the basic video feed into a polished TikTok-like experience with interactive overlays, video controls, and satisfying animations.
+Transform the basic video feed into a polished TikTok-like experience with interactive overlays, gesture controls, and satisfying animations — all layered on top of the full-screen video via a `Stack` in `FeedVideoItem`.
 
 ## Dependencies
-
 Requires **Milestone 3** complete (video feed with autoplay working).
 
----
+## What Was Built
+Five overlay widgets integrated into `FeedVideoItem`'s 7-layer `Stack`:
+1. **`VideoGestureControls`** — Long-press for 2x playback speed with a badge indicator
+2. **`DoubleTapLikeOverlay`** — Double-tap spawns multiple floating hearts with random drift/rotation
+3. **`FeedActionButtons`** — Upvote (toggle), comment (opens sheet), flag column with haptic feedback
+4. **`FeedInfoBar`** — Crime type badge, description, distance/time row
+5. **`VideoProgressBar`** — Seekable thin bar with drag handle and timestamp preview
+6. **`CommentsSheet`** — Modal bottom sheet for viewing/interacting with comments
 
-## Complete Gesture Map
+Plus a pause icon overlay and buffering indicator built directly into `FeedVideoItem`.
 
-| Gesture | Action |
-|---------|--------|
-| **Tap** | Pause/play (existing) |
-| **Double-tap** | Upvote + heart animation |
-| **Long-press anywhere** | 2x speed fast-forward |
-| **Drag progress bar** | Seek to position |
+## Key Files
 
----
-
-## UI Layout
-
-```
-┌─────────────────────────────┐
-│                             │
-│      [LONG-PRESS: ⏩ 2x]    │  ← Hold anywhere to fast-forward
-│                             │
-│         VIDEO               │
-│      (full screen)          │
-│                             │
-│                        ┌───┐│
-│                        │ ▲ ││  ← Upvote (123)
-│                        ├───┤│
-│                        │ 💬││  ← Comments (45)
-│                        ├───┤│
-│                        │ ⚑ ││  ← Flag
-│                        └───┘│
-│  ┌──────────────────────┐   │
-│  │ 🔴 THEFT             │   │  ← Crime badge (color-coded)
-│  │ Someone broke into..  │   │  ← Description (2 lines max)
-│  │ 📍 0.3 mi • 2h ago   │   │  ← Distance & time
-│  └──────────────────────┘   │
-│  ════════════════════════   │  ← Progress bar (3px, seekable)
-│                             │
-│  ╭───────────────────────╮  │
-│  │  🏠   🗺️   ➕   ⚙️   │  │  ← Floating nav bar (blurred bg)
-│  ╰───────────────────────╯  │
-│          safe area          │
-└─────────────────────────────┘
-```
-
-**Layer order (bottom to top):**
-1. Full-screen video (extends behind everything)
-2. Info bar (positioned above nav bar, ~100px from bottom)
-3. Progress bar (just above nav bar, ~80px from bottom)
-4. Floating nav bar (bottom with safe area padding)
-5. Action buttons (right side, clears nav bar)
-
----
-
-## Files to Create/Modify (6 total)
-
-| File | Action | Description |
-|------|--------|-------------|
-| `feed_video_item.dart` | Modify | Add Stack layout, integrate all overlays |
-| `feed_action_buttons.dart` | Create | Upvote, comment, flag column |
-| `feed_info_bar.dart` | Create | Crime badge, description, time/distance |
-| `double_tap_like_overlay.dart` | Create | Heart animation on double-tap |
-| `video_progress_bar.dart` | Create | Thin seekable progress indicator |
-| `video_gesture_controls.dart` | Create | Long-press for 2x fast-forward |
-
----
+| File | Description |
+|------|-------------|
+| `apps/mobile/lib/features/feed/presentation/widgets/feed_video_item.dart` | 7-layer Stack integrating all overlays |
+| `apps/mobile/lib/features/feed/presentation/widgets/video_gesture_controls.dart` | Long-press 2x speed handler |
+| `apps/mobile/lib/features/feed/presentation/widgets/double_tap_like_overlay.dart` | Multi-heart floating animation |
+| `apps/mobile/lib/features/feed/presentation/widgets/feed_action_buttons.dart` | Side action buttons column |
+| `apps/mobile/lib/features/feed/presentation/widgets/feed_info_bar.dart` | Bottom info bar with crime badge |
+| `apps/mobile/lib/features/feed/presentation/widgets/video_progress_bar.dart` | Seekable progress bar with gesture zone |
+| `apps/mobile/lib/features/feed/presentation/widgets/comments_sheet.dart` | Comment viewing bottom sheet |
+| `apps/mobile/lib/core/constants/app_constants.dart` | All animation/sizing constants |
+| `apps/mobile/lib/core/utils/formatters.dart` | Count and distance formatting |
 
 ## Implementation Details
 
-### 1. Video Gesture Controls (NEW)
+### FeedVideoItem Stack Layout
 
-Long-press anywhere triggers 2x playback speed:
-
-```dart
-// lib/features/feed/presentation/widgets/video_gesture_controls.dart
-class VideoGestureControls extends StatefulWidget {
-  final VideoPlayerController controller;
-  final Widget child;
-}
-```
-
-- **Long-press:** Sets 2x playback speed, shows "⏩ 2x" indicator centered on screen
-- **Release:** Returns to 1x speed, indicator fades out
-- Coexists with tap (pause) and double-tap (like) gestures
-
-### 2. Video Progress Bar (NEW)
-
-Thin progress indicator positioned above the floating nav bar:
+The `build` method in `FeedVideoItem` arranges 7 layers. All overlay positions are calculated relative to `navBarClearance` (nav bar height + safe area + margin) so they sit above the floating nav bar:
 
 ```dart
-// lib/features/feed/presentation/widgets/video_progress_bar.dart
-class VideoProgressBar extends StatelessWidget {
-  final VideoPlayerController controller;
-  final bool showOnPause; // Auto-show when paused
-}
-```
-
-- **Height:** 3px normally, 6px when dragging
-- **Color:** White progress on semi-transparent track
-- **Seek:** Drag to position, shows timestamp preview
-- **Position:** Bottom of video area, above floating nav bar (~80px from screen bottom)
-
-### 3. Feed Item with Overlay Stack
-
-```dart
-// lib/features/feed/presentation/widgets/feed_video_item.dart (updated)
+// apps/mobile/lib/features/feed/presentation/widgets/feed_video_item.dart
 @override
 Widget build(BuildContext context) {
-  // Get nav bar height to position overlays correctly
-  final bottomPadding = 80.0; // Nav bar height + safe area
-  
-  return Stack(
-    fit: StackFit.expand,
-    children: [
-      // Video layer (full screen)
-      _buildVideoPlayer(),
-      
-      // Long-press gesture for 2x speed
-      VideoGestureControls(
-        controller: _controller,
-        child: DoubleTapLikeOverlay(
-          onDoubleTap: _handleUpvote,
-          child: GestureDetector(
-            onTap: _togglePlayPause,
-            child: Container(color: Colors.transparent),
+  final isUpvoted = ref.watch(upvotedReportsProvider).contains(widget.report.id);
+  final navBarClearance = _getNavBarClearance(context);
+
+  ref.listen<bool>(isFeedTabActiveProvider, (previous, current) {
+    _handleTabVisibilityChange(current);
+  });
+
+  return Container(
+    color: AppColors.background,
+    child: Stack(
+      fit: StackFit.expand,
+      children: [
+        // Layer 1: Video or placeholder
+        if (_hasError) VideoErrorPlaceholder(message: _errorMessage, onRetry: _retryLoad)
+        else if (controllerReady) _buildVideoPlayer()
+        else const VideoLoadingPlaceholder(),
+
+        // Layer 2: Gesture handlers (long-press → double-tap → tap)
+        if (controllerReady)
+          VideoGestureControls(
+            controller: _controller,
+            child: DoubleTapLikeOverlay(
+              onDoubleTap: _handleDoubleTapLike,
+              child: GestureDetector(
+                onTap: _togglePlayPause,
+                behavior: HitTestBehavior.opaque,
+                child: const SizedBox.expand(),
+              ),
+            ),
           ),
-        ),
-      ),
-      
-      // Side action buttons (right side, above nav bar)
-      Positioned(
-        right: 12,
-        bottom: bottomPadding + 100, // Clear nav bar
-        child: FeedActionButtons(
-          report: widget.report,
-          onUpvote: _handleUpvote,
-          onComment: widget.onCommentTap,
-          onFlag: _handleFlag,
-        ),
-      ),
-      
-      // Bottom info bar (above progress bar)
-      Positioned(
-        left: 16,
-        right: 80,
-        bottom: bottomPadding + 20, // Above progress bar
-        child: FeedInfoBar(report: widget.report),
-      ),
-      
-      // Progress bar (just above nav bar)
-      Positioned(
-        left: 0,
-        right: 0,
-        bottom: bottomPadding,
-        child: VideoProgressBar(controller: _controller),
-      ),
-    ],
+
+        // Layer 3: Buffering indicator
+        if (_isBuffering && controllerReady)
+          const Center(child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+
+        // Layer 4: Pause icon
+        if (controllerReady && _isPaused)
+          IgnorePointer(
+            child: Center(
+              child: Container(
+                padding: EdgeInsets.all(AppSpacing.lg - AppSpacing.xs),
+                decoration: BoxDecoration(color: AppColors.overlayMedium, shape: BoxShape.circle),
+                child: Icon(Icons.play_arrow_rounded, color: AppColors.textPrimary, size: AppSpacing.iconXl),
+              ),
+            ),
+          ),
+
+        // Layer 5: Progress bar (behind buttons/info so they receive taps)
+        if (controllerReady)
+          Positioned(left: 0, right: 0, bottom: navBarClearance,
+            child: VideoProgressBar(controller: _controller)),
+
+        // Layer 6: Side action buttons
+        Positioned(right: 12, bottom: navBarClearance + 100,
+          child: FeedActionButtons(
+            report: widget.report,
+            isUpvoted: isUpvoted,
+            onUpvote: _handleUpvoteButtonTap,
+            onComment: _showComments,
+            onFlag: _handleFlag,
+          )),
+
+        // Layer 7: Bottom info bar
+        Positioned(
+          left: 16, right: AppConstants.feedInfoBarRightMargin,
+          bottom: navBarClearance + 20,
+          child: FeedInfoBar(report: widget.report)),
+      ],
+    ),
   );
 }
 ```
 
-### 4. Action Buttons
+### Gesture Map
+
+| Gesture | Action | Handler |
+|---------|--------|---------|
+| **Tap** | Toggle play/pause + show pause icon | `GestureDetector.onTap` → `_togglePlayPause()` |
+| **Double-tap** | Upvote (add only) + floating heart animation | `DoubleTapLikeOverlay.onDoubleTapDown` → `_handleDoubleTapLike()` |
+| **Long-press** | 2x speed + badge indicator | `VideoGestureControls.onLongPressStart/End` |
+| **Horizontal drag on progress bar** | Seek to position | `VideoProgressBar` gesture detector |
+
+Double-tap only adds upvotes, never removes. The upvote button toggles on/off via `toggleUpvote()`.
+
+### Video Gesture Controls (Long-press 2x Speed)
+
+Wraps child in a `GestureDetector` with `onLongPressStart`/`onLongPressEnd`. Sets playback speed to 2.0 on hold, 1.0 on release. Shows a badge in the top-right corner. Includes haptic feedback (`HapticFeedback.mediumImpact`). If the video is paused, long-press also starts playback:
 
 ```dart
-// lib/features/feed/presentation/widgets/feed_action_buttons.dart
+// apps/mobile/lib/features/feed/presentation/widgets/video_gesture_controls.dart
+void _startFastForward() {
+  if (widget.controller == null) return;
+  if (!widget.controller!.value.isInitialized) return;
+
+  HapticFeedback.mediumImpact();
+
+  if (!widget.controller!.value.isPlaying) {
+    widget.controller!.play();
+  }
+
+  widget.controller!.setPlaybackSpeed(2.0);
+  setState(() => _isFastForwarding = true);
+}
+
+// Badge indicator:
+Positioned(
+  top: MediaQuery.of(context).padding.top + 12,
+  right: 12,
+  child: Container(
+    decoration: BoxDecoration(
+      color: AppColors.overlayDark,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.fast_forward_rounded, color: AppColors.textPrimary, size: AppSpacing.iconSm),
+        SizedBox(width: AppSpacing.xs),
+        Text('2x', style: AppTypography.labelSmall.copyWith(
+          color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+      ],
+    ),
+  ),
+),
+```
+
+### Double-Tap Floating Hearts
+
+Uses `TickerProviderStateMixin` to support multiple simultaneous hearts. Each heart gets its own `AnimationController` and random `horizontalDrift` / `rotation`. Hearts float upward by `AppConstants.heartFloatDistance` (150px), scale with a bounce (peak 1.2x), and fade out over the last 40% of the animation:
+
+```dart
+// apps/mobile/lib/features/feed/presentation/widgets/double_tap_like_overlay.dart
+void _handleDoubleTap(TapDownDetails details) {
+  HapticFeedback.mediumImpact();
+
+  final controller = AnimationController(
+    duration: AppConstants.floatingHeartDuration, // 1000ms
+    vsync: this,
+  );
+
+  final heart = _FloatingHeart(
+    id: DateTime.now().microsecondsSinceEpoch,
+    position: details.localPosition,
+    controller: controller,
+    horizontalDrift: (_random.nextDouble() - 0.5) * AppConstants.heartMaxDrift, // ±60px
+    rotation: (_random.nextDouble() - 0.5) * AppConstants.heartMaxRotation,    // ±0.5rad
+  );
+
+  setState(() => _hearts.add(heart));
+  controller.forward().then((_) {
+    if (mounted) {
+      setState(() => _hearts.removeWhere((h) => h.id == heart.id));
+      controller.dispose();
+    }
+  });
+  widget.onDoubleTap();
+}
+```
+
+Each heart renders with scale, opacity, vertical float, and horizontal drift all driven by `Curves.easeOut` / `Curves.easeIn`:
+
+```dart
+// Animation values for each heart:
+// Scale: 0 → 1.2 (first 30%) → 1.0 (remaining 70%)
+// Opacity: 1.0 (first 60%) → 0.0 (last 40%)
+// Vertical: 0 → -150px (easeOut)
+// Horizontal: 0 → drift (easeOut)
+```
+
+### Feed Action Buttons
+
+Vertical column of three buttons (upvote, comment, flag) with 48px circular backgrounds (`AppColors.overlayLight`), formatted counts via `Formatters.count()`, haptic feedback on every tap, and accessibility labels:
+
+```dart
+// apps/mobile/lib/features/feed/presentation/widgets/feed_action_buttons.dart
 class FeedActionButtons extends StatelessWidget {
   final Report report;
+  final bool isUpvoted;
   final VoidCallback? onUpvote;
   final VoidCallback? onComment;
   final VoidCallback? onFlag;
-  
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -209,292 +233,167 @@ class FeedActionButtons extends StatelessWidget {
       children: [
         _ActionButton(
           icon: Icons.arrow_upward_rounded,
-          label: _formatCount(report.upvotes),
-          isActive: false, // TODO: track user upvotes
-          activeColor: Colors.red,
+          label: Formatters.count(report.upvotes),
+          isActive: isUpvoted,
+          activeColor: AppColors.accent,
           onTap: onUpvote,
+          semanticLabel: 'Upvote. Current count: ${report.upvotes}',
         ),
-        const SizedBox(height: 20),
-        _ActionButton(
-          icon: Icons.chat_bubble_outline_rounded,
-          label: _formatCount(report.commentCount),
-          onTap: onComment,
-        ),
-        const SizedBox(height: 20),
-        _ActionButton(
-          icon: Icons.flag_outlined,
-          label: 'Report',
-          onTap: onFlag,
-        ),
+        const SizedBox(height: AppConstants.feedActionButtonSpacing), // 20
+        _ActionButton(icon: Icons.chat_bubble_outline_rounded,
+          label: Formatters.count(report.commentCount), onTap: onComment, ...),
+        const SizedBox(height: AppConstants.feedActionButtonSpacing),
+        _ActionButton(icon: Icons.flag_outlined, label: 'Report', onTap: onFlag, ...),
       ],
     );
   }
-  
-  String _formatCount(int count) {
-    if (count >= 1000000) return '${(count / 1000000).toStringAsFixed(1)}M';
-    if (count >= 1000) return '${(count / 1000).toStringAsFixed(1)}K';
-    return count.toString();
-  }
+}
+```
+
+The upvote button's active state turns `AppColors.accent` (red). Count formatting: 999 → "999", 1500 → "1.5K", 1500000 → "1.5M".
+
+### Feed Info Bar
+
+Shows a color-coded crime type badge, 2-line description, and distance/time metadata. Text uses `AppTypography.videoOverlayShadow` for readability over video:
+
+```dart
+// apps/mobile/lib/features/feed/presentation/widgets/feed_info_bar.dart
+@override
+Widget build(BuildContext context) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      // Crime type badge
+      Container(
+        padding: EdgeInsets.symmetric(horizontal: AppSpacing.sm + AppSpacing.xxs, vertical: AppSpacing.xs),
+        decoration: BoxDecoration(
+          color: report.type.color, // e.g. AppColors.crimeTheft (orange)
+          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+        ),
+        child: Text(report.type.displayName.toUpperCase(),
+          style: AppTypography.labelSmall.copyWith(
+            color: AppColors.textPrimary, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+      ),
+      SizedBox(height: AppSpacing.sm),
+
+      // Description (2 lines max)
+      Text(report.description, maxLines: 2, overflow: TextOverflow.ellipsis,
+        style: AppTypography.bodyMedium.copyWith(
+          color: AppColors.textPrimary, height: 1.3,
+          shadows: AppTypography.videoOverlayShadow)),
+
+      // Distance and time
+      Row(children: [
+        Icon(Icons.location_on, size: 14, color: Colors.white70),
+        SizedBox(width: 4),
+        Text(Formatters.distance(report.distanceKm), ...),  // "0.3 mi"
+        SizedBox(width: 12),
+        Icon(Icons.access_time, size: 14, color: Colors.white70),
+        SizedBox(width: 4),
+        Text(report.timeAgo, ...),  // "2h ago"
+      ]),
+    ],
+  );
+}
+```
+
+### Video Progress Bar
+
+A thin 3px bar that expands to 6px when dragging. The gesture zone is 100px tall (invisible, `HitTestBehavior.translucent` so vertical swipes pass through to PageView). Shows a drag handle (12px circle) and timestamp preview popup while seeking:
+
+```dart
+// apps/mobile/lib/features/feed/presentation/widgets/video_progress_bar.dart
+class VideoProgressBar extends StatefulWidget {
+  final VideoPlayerController? controller;
+  final double gestureZoneHeight; // 100px
+  final double barHeight;         // 3px
+  final double expandedBarHeight; // 6px
 }
 
-class _ActionButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool isActive;
-  final Color? activeColor;
-  final VoidCallback? onTap;
-  
-  const _ActionButton({
-    required this.icon,
-    required this.label,
-    this.isActive = false,
-    this.activeColor,
-    this.onTap,
+// Seeking behavior:
+void _onHorizontalDragStart(DragStartDetails details, double width) {
+  HapticFeedback.selectionClick();
+  setState(() { _isDragging = true; _dragProgress = _calculateProgress(widget.controller!.value); });
+}
+
+void _onHorizontalDragUpdate(DragUpdateDetails details, double width) {
+  final delta = details.delta.dx / width;
+  setState(() { _dragProgress = (_dragProgress + delta).clamp(0.0, 1.0); });
+}
+
+void _onHorizontalDragEnd(DragEndDetails details) {
+  HapticFeedback.lightImpact();
+  final newPosition = Duration(
+    milliseconds: (_dragProgress * widget.controller!.value.duration.inMilliseconds).round(),
+  );
+  widget.controller!.seekTo(newPosition);
+  setState(() => _isDragging = false);
+}
+```
+
+Uses `ValueListenableBuilder<VideoPlayerValue>` for efficient rebuilds only when video position changes.
+
+### Comments Integration
+
+Tapping the comment button pauses the video and opens a `CommentsSheet` modal bottom sheet. When the sheet closes, the video resumes:
+
+```dart
+void _showComments() {
+  if (_isControllerValid() && _controller != null) _controller!.pause();
+
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (_) => CommentsSheet(reportId: widget.report.id),
+  ).whenComplete(() {
+    if (widget.isActive && _isControllerValid() && _controller != null) {
+      _controller!.play();
+      setState(() => _isPaused = false);
+    }
   });
-  
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: Colors.black.withAlpha(77), // 0.3 opacity
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              icon,
-              color: isActive ? (activeColor ?? Colors.white) : Colors.white,
-              size: 28,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              shadows: [Shadow(blurRadius: 4, color: Colors.black54)],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 ```
-
-### 5. Info Bar
-
-```dart
-// lib/features/feed/presentation/widgets/feed_info_bar.dart
-class FeedInfoBar extends StatelessWidget {
-  final Report report;
-  
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Crime type badge (color-coded)
-        Container(
-          padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: report.type.color, // Uses enum color
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            report.type.displayName.toUpperCase(),
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.5,
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        
-        // Description (max 2 lines)
-        Text(
-          report.description,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            height: 1.3,
-            shadows: [Shadow(blurRadius: 4, color: Colors.black54)],
-          ),
-        ),
-        const SizedBox(height: 6),
-        
-        // Location and time
-        Row(
-          children: [
-            Icon(Icons.location_on, size: 14, color: Colors.white70),
-            const SizedBox(width: 4),
-            Text(
-              '${report.distanceKm?.toStringAsFixed(1) ?? '?'} mi',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-            const SizedBox(width: 12),
-            Icon(Icons.access_time, size: 14, color: Colors.white70),
-            const SizedBox(width: 4),
-            Text(
-              report.timeAgo,
-              style: TextStyle(color: Colors.white70, fontSize: 12),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-```
-
-### 6. Double-Tap Heart Animation
-
-```dart
-// lib/features/feed/presentation/widgets/double_tap_like_overlay.dart
-class DoubleTapLikeOverlay extends StatefulWidget {
-  final Widget child;
-  final VoidCallback onDoubleTap;
-  
-  @override
-  State<DoubleTapLikeOverlay> createState() => _DoubleTapLikeOverlayState();
-}
-
-class _DoubleTapLikeOverlayState extends State<DoubleTapLikeOverlay>
-    with SingleTickerProviderStateMixin {
-  
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-  late Animation<double> _opacityAnimation;
-  
-  Offset? _tapPosition;
-  bool _showHeart = false;
-  
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: Duration(milliseconds: 800),
-      vsync: this,
-    );
-    
-    _scaleAnimation = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.4), weight: 30),
-      TweenSequenceItem(tween: Tween(begin: 1.4, end: 1.0), weight: 20),
-      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.0), weight: 50),
-    ]).animate(_controller);
-    
-    _opacityAnimation = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.0), weight: 20),
-      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.0), weight: 50),
-      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0), weight: 30),
-    ]).animate(_controller);
-  }
-  
-  void _handleDoubleTap(TapDownDetails details) {
-    setState(() {
-      _tapPosition = details.localPosition;
-      _showHeart = true;
-    });
-    
-    _controller.forward(from: 0).then((_) {
-      if (mounted) setState(() => _showHeart = false);
-    });
-    
-    widget.onDoubleTap();
-  }
-  
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-  
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onDoubleTapDown: _handleDoubleTap,
-      onDoubleTap: () {}, // Required for onDoubleTapDown to work
-      child: Stack(
-        children: [
-          widget.child,
-          if (_showHeart && _tapPosition != null)
-            Positioned(
-              left: _tapPosition!.dx - 40,
-              top: _tapPosition!.dy - 40,
-              child: AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  return Opacity(
-                    opacity: _opacityAnimation.value,
-                    child: Transform.scale(
-                      scale: _scaleAnimation.value,
-                      child: Icon(
-                        Icons.favorite,
-                        color: Colors.red,
-                        size: 80,
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
-```
-
----
 
 ## Visual Specifications
 
 | Element | Style |
 |---------|-------|
-| Progress bar | 3px height, white on rgba(255,255,255,0.3) |
-| Fast-forward indicator | "⏩ 2x" centered, semi-transparent bg |
-| Action buttons | 48x48 circles, rgba(0,0,0,0.3) bg |
-| Text shadows | Shadow(blurRadius: 4, color: black54) |
-| Crime badge | Rounded rect, type.color background |
-| Bottom padding | ~80px to clear floating nav bar |
+| Progress bar track | 3px, `AppColors.progressTrack` (30% white) |
+| Progress bar fill | White, rounds to `barHeight / 2` radius |
+| Progress bar (dragging) | Expands to 6px, shows 12px white circle handle |
+| Fast-forward badge | Top-right, `AppColors.overlayDark` (60% black), rounded pill |
+| Action buttons | 48x48 circles, `AppColors.overlayLight` (30% black) |
+| Active upvote | `AppColors.accent` (#E53935 red) |
+| Text shadows | `AppTypography.videoOverlayShadow` — 4px blur, black54 |
+| Crime badge | Rounded rect, `report.type.color` background |
+| Heart icon | 80px, `AppColors.accent`, 10px blur shadow |
+| Pause icon | `AppSpacing.iconXl` (48px), `AppColors.overlayMedium` circle |
+| Timestamp popup | `AppColors.overlayHeavy` (80% black), rounded |
 
----
+## Testing
+No automated tests. Manual verification:
+- Upvote button toggles on/off with red highlight
+- Double-tap spawns hearts that float and fade
+- Multiple rapid double-taps stack multiple hearts
+- Long-press shows 2x badge and speeds up video
+- Releasing long-press returns to 1x
+- Progress bar seek works correctly
+- Drag handle and timestamp appear while seeking
+- Crime type badge color matches report type
+- Description truncates at 2 lines
+- Distance shown in miles (converted from km)
+- Comment sheet pauses video, closing resumes it
+- All overlays clear the floating nav bar
 
-## Deliverable Checklist
+## Notes
 
-- [ ] Side action buttons (upvote, comment, flag)
-- [ ] Formatted counts (1.2K, 3.5M)
-- [ ] Bottom info bar with crime badge
-- [ ] Description (2 lines max)
-- [ ] Distance and time display
-- [ ] Double-tap heart animation
-- [ ] Video progress bar (seekable)
-- [ ] Long-press anywhere = 2x speed
-- [ ] Visual feedback for gestures
-- [ ] All text readable over video
-- [ ] Overlays positioned above floating nav bar
-
----
-
-## Estimated Effort
-
-| Component | Time |
-|-----------|------|
-| Action buttons | 30 min |
-| Info bar | 30 min |
-| Double-tap heart | 45 min |
-| Progress bar | 45 min |
-| Gesture controls | 30 min |
-| Integration + polish | 30 min |
-| **Total** | ~3.5 hours |
+- **Deviation: Floating hearts** — The original plan used a single heart with TweenSequence animations (scale up → bounce → fade). The implementation supports multiple simultaneous hearts, each with random horizontal drift (±60px) and rotation (±0.5 radians), creating a more dynamic TikTok-like effect.
+- **Deviation: Fast-forward indicator position** — The plan showed it centered on screen. The implementation places it as a compact badge in the top-right corner, which is less intrusive.
+- **Deviation: Progress bar gesture zone** — Not in the original plan. The implementation uses a 100px invisible gesture zone above the 3px bar, with `HitTestBehavior.translucent` to let vertical swipes pass through to the PageView while capturing horizontal drags for seeking.
+- **Deviation: Haptic feedback** — Added throughout (medium impact on double-tap and long-press, light impact on upvote tap and seek end, selection click on seek start). Not specified in the original plan.
+- **Deviation: Accessibility** — `FeedActionButtons` includes `Semantics` labels, and `VideoProgressBar` has a slider semantic. Not in the original plan.
+- **Deviation: Upvote behavior** — Double-tap only adds (never removes) upvotes. The button tap toggles. This is intentional — TikTok uses the same pattern to keep the double-tap gesture always positive.
+- **Deviation: Comments sheet** — The plan didn't include a comments sheet, but `CommentsSheet` was implemented as part of this milestone with video pause/resume integration.
+- **`_handleFlag`** — Currently a no-op stub. Flagging functionality is deferred to a future milestone.

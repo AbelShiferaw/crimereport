@@ -1,443 +1,469 @@
 # Milestone 28: Push Notification Integration
 
+## Status
+Not Started
+
 ## Goal
-Integrate Firebase Cloud Messaging in Flutter app for receiving nearby crime alerts.
+Integrate Firebase Cloud Messaging (FCM) into the Flutter app so users receive push notifications for nearby crime reports. Covers: Firebase project setup, permission handling, FCM token registration with the backend, foreground/background notification display, deep linking from notification tap to the relevant report, and user-facing notification preferences tied to the existing settings screen.
 
 ## Dependencies
-Requires **Milestone 24** (push notification backend) and Firebase project setup.
+- **Milestone 25** – `ApiClient` available for backend registration calls
+- **Milestone 26** – WebSocket service for supplementary real-time updates
+- **Milestone 17** – Backend deployed (will need new notification endpoints — these are a backend task but the Flutter side needs to know the contract)
+- Firebase project created in Firebase Console with iOS + Android apps registered
+- Existing settings providers in `lib/features/settings/providers/settings_providers.dart` (has `pushNotificationsEnabledProvider`, `notificationRadiusProvider`, `anonymousIdProvider`)
 
-## Implementation
+## Plan
 
-### 1. Firebase Setup
+### 1. Add Firebase Dependencies
 
-**pubspec.yaml additions:**
+Add to `pubspec.yaml`:
+
 ```yaml
 dependencies:
-  firebase_core: ^2.24.2
-  firebase_messaging: ^14.7.10
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.2.1
 ```
 
-**iOS Setup** (`ios/Runner/AppDelegate.swift`):
-```swift
-import UIKit
-import Flutter
-import FirebaseCore
-import FirebaseMessaging
+Also requires:
+- `ios/Runner/GoogleService-Info.plist` — downloaded from Firebase Console
+- `android/app/google-services.json` — downloaded from Firebase Console
+- Podfile update for iOS minimum deployment target (Firebase requires iOS 13+)
 
-@UIApplicationMain
-@objc class AppDelegate: FlutterAppDelegate {
-  override func application(
-    _ application: UIApplication,
-    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-  ) -> Bool {
-    FirebaseApp.configure()
-    
-    // Request notification permission
-    UNUserNotificationCenter.current().delegate = self
-    
-    let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
-    UNUserNotificationCenter.current().requestAuthorization(
-      options: authOptions,
-      completionHandler: { _, _ in }
-    )
-    
-    application.registerForRemoteNotifications()
-    
-    GeneratedPluginRegistrant.register(with: self)
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
+### 2. Firebase Initialization
+
+Update `lib/main.dart` to initialize Firebase before `runApp`.
+
+```dart
+// lib/main.dart  (updated)
+
+import 'package:firebase_core/firebase_core.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
+  await dotenv.load(fileName: '.env');
+  await Firebase.initializeApp();
+
+  // Register background message handler (must be top-level function)
+  FirebaseMessaging.onBackgroundMessage(_onBackgroundMessage);
+
+  runApp(const ProviderScope(child: CrimeReportApp()));
+}
+
+@pragma('vm:entry-point')
+Future<void> _onBackgroundMessage(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  // Background messages are handled by the system notification tray.
+  // Deep linking happens when the user taps the notification (onMessageOpenedApp).
 }
 ```
 
-### 2. Push Notification Service
+### 3. Push Notification Service
+
+Encapsulates all FCM logic: permission request, token management, foreground display, and notification tap handling.
+
 ```dart
 // lib/shared/services/push_notification_service.dart
 
+import 'dart:async';
+import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/foundation.dart';
 
 class PushNotificationService {
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
-  final FlutterLocalNotificationsPlugin _localNotifications =
-      FlutterLocalNotificationsPlugin();
-  
+
   final _tokenController = StreamController<String>.broadcast();
-  Stream<String> get tokenStream => _tokenController.stream;
-  
-  Future<void> initialize() async {
-    // Request permission
+  Stream<String> get onTokenRefresh => _tokenController.stream;
+
+  final _notificationTapController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onNotificationTap => _notificationTapController.stream;
+
+  Future<NotificationPermissionResult> requestPermission() async {
     final settings = await _messaging.requestPermission(
       alert: true,
       badge: true,
       sound: true,
       provisional: false,
     );
-    
-    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      print('Push notifications authorized');
-      await _setupNotifications();
-    }
+    return switch (settings.authorizationStatus) {
+      AuthorizationStatus.authorized => NotificationPermissionResult.granted,
+      AuthorizationStatus.provisional => NotificationPermissionResult.granted,
+      AuthorizationStatus.denied => NotificationPermissionResult.denied,
+      AuthorizationStatus.notDetermined => NotificationPermissionResult.denied,
+    };
   }
-  
-  Future<void> _setupNotifications() async {
-    // Get FCM token
-    final token = await _messaging.getToken();
-    if (token != null) {
-      _tokenController.add(token);
-    }
-    
-    // Listen for token refresh
+
+  Future<String?> getToken() => _messaging.getToken();
+
+  Future<void> initialize() async {
+    // Token refresh
     _messaging.onTokenRefresh.listen(_tokenController.add);
-    
-    // Initialize local notifications (for foreground)
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: false,
-      requestBadgePermission: false,
-      requestSoundPermission: false,
-    );
-    
-    await _localNotifications.initialize(
-      InitializationSettings(android: androidSettings, iOS: iosSettings),
-      onDidReceiveNotificationResponse: _onNotificationTapped,
-    );
-    
-    // Create notification channel (Android)
-    const channel = AndroidNotificationChannel(
-      'crime_alerts',
-      'Crime Alerts',
-      description: 'Notifications for nearby crime reports',
-      importance: Importance.high,
-    );
-    
-    await _localNotifications
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
-    
-    // Handle foreground messages
+
+    // Foreground messages — show in-app banner
     FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
-    
-    // Handle background message tap
-    FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
-    
-    // Handle app opened from terminated state
+
+    // User tapped a notification while app was in background
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+
+    // App opened from terminated state via notification
     final initialMessage = await _messaging.getInitialMessage();
     if (initialMessage != null) {
-      _handleMessageOpenedApp(initialMessage);
+      _handleNotificationTap(initialMessage);
     }
   }
-  
+
   void _handleForegroundMessage(RemoteMessage message) {
-    final notification = message.notification;
-    final data = message.data;
-    
-    if (notification != null) {
-      // Show local notification
-      _localNotifications.show(
-        notification.hashCode,
-        notification.title,
-        notification.body,
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            'crime_alerts',
-            'Crime Alerts',
-            icon: '@mipmap/ic_launcher',
-            importance: Importance.high,
-            priority: Priority.high,
-          ),
-          iOS: DarwinNotificationDetails(
-            presentAlert: true,
-            presentBadge: true,
-            presentSound: true,
-          ),
-        ),
-        payload: json.encode(data),
-      );
-    }
+    debugPrint('[FCM] foreground message: ${message.data}');
+    // Foreground display is handled by the ForegroundNotificationBanner widget
+    // which listens to FirebaseMessaging.onMessage directly.
   }
-  
-  void _handleMessageOpenedApp(RemoteMessage message) {
-    final data = message.data;
-    
-    if (data['type'] == 'NEW_REPORT' && data['reportId'] != null) {
-      // Navigate to report
-      _navigateToReport(data['reportId']);
-    }
+
+  void _handleNotificationTap(RemoteMessage message) {
+    _notificationTapController.add(message.data);
   }
-  
-  void _onNotificationTapped(NotificationResponse response) {
-    if (response.payload != null) {
-      final data = json.decode(response.payload!);
-      if (data['type'] == 'NEW_REPORT' && data['reportId'] != null) {
-        _navigateToReport(data['reportId']);
-      }
-    }
+
+  Future<void> deleteToken() => _messaging.deleteToken();
+
+  void dispose() {
+    _tokenController.close();
+    _notificationTapController.close();
   }
-  
-  void _navigateToReport(String reportId) {
-    // Use navigator key to navigate
-    NavigationService.navigatorKey.currentState?.push(
-      MaterialPageRoute(
-        builder: (_) => ReportDetailScreen(reportId: reportId),
-      ),
-    );
-  }
-  
-  Future<String?> getToken() => _messaging.getToken();
 }
+
+enum NotificationPermissionResult { granted, denied }
 ```
 
-### 3. Register Device with Backend
+### 4. Notification Providers
+
+Riverpod providers for initializing the service, registering the token with the backend, and handling deep links.
+
 ```dart
 // lib/shared/providers/notification_providers.dart
 
-final pushNotificationServiceProvider = Provider<PushNotificationService>((ref) {
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:crimereport/shared/services/push_notification_service.dart';
+import 'package:crimereport/shared/data/api/api_client.dart';
+import 'package:crimereport/features/map/providers/map_providers.dart';
+import 'package:crimereport/features/settings/providers/settings_providers.dart';
+
+final pushServiceProvider = Provider<PushNotificationService>((ref) {
   final service = PushNotificationService();
+  ref.onDispose(() => service.dispose());
   return service;
 });
 
-final registerPushNotificationsProvider = FutureProvider<void>((ref) async {
-  final pushService = ref.watch(pushNotificationServiceProvider);
-  final api = ref.watch(apiClientProvider);
-  final location = await ref.watch(userLocationProvider.future);
-  
+/// Initializes FCM, requests permission, registers token with backend.
+/// Should be watched once from AppShell or CrimeReportApp.
+final initNotificationsProvider = FutureProvider<void>((ref) async {
+  final pushService = ref.watch(pushServiceProvider);
+  final enabled = ref.watch(pushNotificationsEnabledProvider);
+
+  if (!enabled) return;
+
+  final permission = await pushService.requestPermission();
+  if (permission == NotificationPermissionResult.denied) return;
+
   await pushService.initialize();
-  
+
   final token = await pushService.getToken();
   if (token == null) return;
-  
-  // Determine platform
-  final platform = Platform.isIOS ? 'ios' : 'android';
-  
-  // Register with backend
-  await api.post('/api/v1/notifications/register', data: {
-    'fcmToken': token,
-    'platform': platform,
-    'latitude': location.latitude,
-    'longitude': location.longitude,
+
+  await _registerToken(ref, token);
+
+  // Re-register on token refresh
+  pushService.onTokenRefresh.listen((newToken) => _registerToken(ref, newToken));
+});
+
+Future<void> _registerToken(Ref ref, String token) async {
+  final api = ref.read(apiClientProvider);
+  final position = ref.read(userLocationProvider);
+  final radius = ref.read(notificationRadiusProvider);
+
+  await api.dio.post('/api/v1/notifications/register', data: {
+    'device_id': api.dio.options.headers['X-Device-ID'],
+    'fcm_token': token,
+    'platform': Platform.isIOS ? 'ios' : 'android',
+    'lat': position?.latitude,
+    'lng': position?.longitude,
+    'radius_km': radius,
   });
-  
-  // Listen for token refresh
-  pushService.tokenStream.listen((newToken) async {
-    await api.post('/api/v1/notifications/register', data: {
-      'fcmToken': newToken,
-      'platform': platform,
-      'latitude': location.latitude,
-      'longitude': location.longitude,
-    });
+}
+```
+
+### 5. Deep Link Handler
+
+Navigates to the tapped report. Wired up via a provider that the root widget watches.
+
+```dart
+// lib/shared/services/deep_link_handler.dart
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:crimereport/shared/services/push_notification_service.dart';
+import 'package:crimereport/shared/providers/notification_providers.dart';
+
+/// Global navigator key for push-notification-initiated navigation.
+final navigatorKeyProvider = Provider<GlobalKey<NavigatorState>>((ref) {
+  return GlobalKey<NavigatorState>();
+});
+
+/// Listens to notification taps and navigates to the relevant report.
+/// Watch from the root widget to keep active.
+final deepLinkProvider = Provider<void>((ref) {
+  final pushService = ref.watch(pushServiceProvider);
+  final navKey = ref.watch(navigatorKeyProvider);
+
+  pushService.onNotificationTap.listen((data) {
+    final reportId = data['report_id'] as String?;
+    if (reportId == null) return;
+
+    // Navigate to the feed focused on this report.
+    // The exact navigation depends on the app's routing setup.
+    // For now, switch to feed tab and scroll to report.
+    navKey.currentState?.pushNamed('/report/$reportId');
   });
 });
 ```
 
-### 4. Notification Settings Screen Update
-```dart
-// lib/features/settings/presentation/settings_screen.dart (additions)
+### 6. Foreground Notification Banner
 
-class _NotificationSettingsSection extends ConsumerWidget {
+An in-app banner that slides down when a notification arrives while the app is in the foreground. Less intrusive than a system notification.
+
+```dart
+// lib/shared/widgets/foreground_notification_banner.dart
+
+import 'dart:async';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/material.dart';
+import 'package:crimereport/core/theme/theme.dart';
+
+class ForegroundNotificationBanner extends StatefulWidget {
+  final Widget child;
+  const ForegroundNotificationBanner({super.key, required this.child});
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final prefs = ref.watch(notificationPreferencesProvider);
-    
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  State<ForegroundNotificationBanner> createState() => _ForegroundNotificationBannerState();
+}
+
+class _ForegroundNotificationBannerState extends State<ForegroundNotificationBanner> {
+  StreamSubscription? _sub;
+  RemoteMessage? _currentMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = FirebaseMessaging.onMessage.listen((message) {
+      if (message.notification == null) return;
+      setState(() => _currentMessage = message);
+      Future.delayed(const Duration(seconds: 4), () {
+        if (mounted && _currentMessage == message) {
+          setState(() => _currentMessage = null);
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
       children: [
-        _SectionHeader(title: 'Notifications'),
-        
-        // Enable/disable toggle
-        SwitchListTile(
-          title: Text('Push Notifications'),
-          subtitle: Text('Get alerts for nearby crimes'),
-          value: prefs.enabled,
-          onChanged: (value) {
-            ref.read(notificationPreferencesProvider.notifier)
-                .setEnabled(value);
-          },
-        ),
-        
-        if (prefs.enabled) ...[
-          // Alert radius
-          ListTile(
-            title: Text('Alert Radius'),
-            subtitle: Text('${(prefs.radius / 1000).round()} km'),
-            trailing: Icon(Icons.chevron_right),
-            onTap: () => _showRadiusPicker(context, ref),
-          ),
-          
-          // Crime types
-          ListTile(
-            title: Text('Crime Types'),
-            subtitle: Text(
-              prefs.types.isEmpty 
-                  ? 'All types'
-                  : prefs.types.map((t) => t.displayName).join(', ')
+        widget.child,
+        if (_currentMessage != null)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8,
+            left: 16,
+            right: 16,
+            child: GestureDetector(
+              onTap: () {
+                setState(() => _currentMessage = null);
+                // Could navigate to report here
+              },
+              child: Material(
+                elevation: 6,
+                borderRadius: BorderRadius.circular(12),
+                color: AppColors.surface,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 24),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _currentMessage!.notification!.title ?? 'Crime Alert',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                            ),
+                            if (_currentMessage!.notification!.body != null)
+                              Text(
+                                _currentMessage!.notification!.body!,
+                                style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            trailing: Icon(Icons.chevron_right),
-            onTap: () => _showTypePicker(context, ref),
           ),
-        ],
       ],
     );
   }
-  
-  void _showRadiusPicker(BuildContext context, WidgetRef ref) {
-    showModalBottomSheet(
-      context: context,
-      builder: (_) => RadiusPickerSheet(
-        currentRadius: ref.read(notificationPreferencesProvider).radius,
-        onSelected: (radius) {
-          ref.read(notificationPreferencesProvider.notifier)
-              .setRadius(radius);
-          Navigator.pop(context);
-        },
-      ),
-    );
-  }
 }
 ```
 
-### 5. Notification Preferences Provider
-```dart
-// lib/shared/providers/notification_preferences_provider.dart
+### 7. Update Settings Screen
 
-class NotificationPreferences {
-  final bool enabled;
-  final int radius; // meters
-  final List<ReportType> types;
-  
-  NotificationPreferences({
-    this.enabled = true,
-    this.radius = 10000,
-    this.types = const [],
+Wire the existing `pushNotificationsEnabledProvider` and `notificationRadiusProvider` to actually register/unregister with the backend when toggled.
+
+```dart
+// lib/features/settings/providers/settings_providers.dart  (additions)
+
+/// When push notifications toggle changes, update the backend.
+void setPushNotificationsEnabled(WidgetRef ref, bool enabled) async {
+  ref.read(pushNotificationsEnabledProvider.notifier).state = enabled;
+
+  final api = ref.read(apiClientProvider);
+  if (!enabled) {
+    // Unregister: tell backend to stop sending to this device
+    await api.dio.post('/api/v1/notifications/unregister', data: {
+      'device_id': api.dio.options.headers['X-Device-ID'],
+    });
+    // Optionally delete FCM token locally
+    await ref.read(pushServiceProvider).deleteToken();
+  } else {
+    // Re-register
+    ref.invalidate(initNotificationsProvider);
+  }
+}
+
+/// When notification radius changes, update the backend registration.
+void setNotificationRadius(WidgetRef ref, double radiusKm) async {
+  ref.read(notificationRadiusProvider.notifier).state = radiusKm;
+
+  final api = ref.read(apiClientProvider);
+  final token = await ref.read(pushServiceProvider).getToken();
+  if (token == null) return;
+
+  final position = ref.read(userLocationProvider);
+  await api.dio.post('/api/v1/notifications/register', data: {
+    'device_id': api.dio.options.headers['X-Device-ID'],
+    'fcm_token': token,
+    'platform': Platform.isIOS ? 'ios' : 'android',
+    'lat': position?.latitude,
+    'lng': position?.longitude,
+    'radius_km': radiusKm,
   });
 }
-
-final notificationPreferencesProvider = StateNotifierProvider<
-    NotificationPreferencesNotifier, NotificationPreferences>((ref) {
-  return NotificationPreferencesNotifier(ref);
-});
-
-class NotificationPreferencesNotifier extends StateNotifier<NotificationPreferences> {
-  final Ref _ref;
-  
-  NotificationPreferencesNotifier(this._ref) : super(NotificationPreferences()) {
-    _loadPreferences();
-  }
-  
-  Future<void> _loadPreferences() async {
-    final prefs = await SharedPreferences.getInstance();
-    state = NotificationPreferences(
-      enabled: prefs.getBool('notifications_enabled') ?? true,
-      radius: prefs.getInt('notifications_radius') ?? 10000,
-      types: (prefs.getStringList('notifications_types') ?? [])
-          .map((t) => ReportType.values.firstWhere((e) => e.name == t))
-          .toList(),
-    );
-  }
-  
-  Future<void> setEnabled(bool enabled) async {
-    state = NotificationPreferences(
-      enabled: enabled,
-      radius: state.radius,
-      types: state.types,
-    );
-    
-    // Update backend
-    final api = _ref.read(apiClientProvider);
-    await api.put('/api/v1/notifications/preferences', data: {
-      'enabled': enabled,
-    });
-    
-    // Save locally
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('notifications_enabled', enabled);
-  }
-  
-  Future<void> setRadius(int radius) async {
-    state = NotificationPreferences(
-      enabled: state.enabled,
-      radius: radius,
-      types: state.types,
-    );
-    
-    final api = _ref.read(apiClientProvider);
-    await api.put('/api/v1/notifications/preferences', data: {
-      'radius': radius,
-    });
-    
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('notifications_radius', radius);
-  }
-  
-  Future<void> setTypes(List<ReportType> types) async {
-    state = NotificationPreferences(
-      enabled: state.enabled,
-      radius: state.radius,
-      types: types,
-    );
-    
-    final api = _ref.read(apiClientProvider);
-    await api.put('/api/v1/notifications/preferences', data: {
-      'types': types.map((t) => t.name).toList(),
-    });
-    
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
-      'notifications_types',
-      types.map((t) => t.name).toList(),
-    );
-  }
-}
 ```
 
-### 6. Initialize in App
+### 8. Wire Up in App
+
 ```dart
-// lib/main.dart
+// lib/app.dart  (updated)
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  
-  runApp(
-    ProviderScope(
-      child: ReportCrimeApp(),
-    ),
-  );
-}
+class CrimeReportApp extends ConsumerWidget {
+  const CrimeReportApp({super.key});
 
-// lib/app.dart
-class ReportCrimeApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     // Initialize push notifications
-    ref.watch(registerPushNotificationsProvider);
-    
+    ref.watch(initNotificationsProvider);
+    // Wire deep link handler
+    ref.watch(deepLinkProvider);
+
+    final navKey = ref.watch(navigatorKeyProvider);
+
+    SystemChrome.setSystemUIOverlayStyle(/* ... existing ... */);
+
     return MaterialApp(
-      navigatorKey: NavigationService.navigatorKey,
-      // ...
+      navigatorKey: navKey,
+      title: 'CrImEreport',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
+      home: const ForegroundNotificationBanner(child: AppShell()),
     );
   }
 }
 ```
 
-## Deliverable Checklist
-- [ ] Firebase configured for iOS and Android
-- [ ] Permission request shows on first launch
-- [ ] FCM token obtained and sent to backend
-- [ ] Token refresh handled
-- [ ] Foreground notifications display
-- [ ] Tapping notification opens report
-- [ ] Background notifications work
-- [ ] App opened from terminated state handles notification
-- [ ] Settings toggle enables/disables
-- [ ] Radius picker updates backend
-- [ ] Crime type filter works
-- [ ] Preferences persisted locally
+## Backend API Contract (reference)
 
-## Files (6 total)
-1. `lib/shared/services/push_notification_service.dart` - Create
-2. `lib/shared/providers/notification_providers.dart` - Create
-3. `lib/shared/providers/notification_preferences_provider.dart` - Create
-4. `lib/features/settings/presentation/settings_screen.dart` - Update
-5. `lib/main.dart` - Update with Firebase init
-6. `pubspec.yaml` - Add Firebase dependencies
+These endpoints need to exist on the backend (separate backend milestone). The Flutter code above assumes:
+
+| Method | Path | Body | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/notifications/register` | `{ device_id, fcm_token, platform, lat, lng, radius_km }` | Register/update FCM token |
+| POST | `/api/v1/notifications/unregister` | `{ device_id }` | Remove device registration |
+
+The backend sends push notifications via FCM with this payload shape:
+
+```json
+{
+  "notification": {
+    "title": "Theft reported nearby",
+    "body": "A theft was reported 0.3 km from you"
+  },
+  "data": {
+    "type": "new_report",
+    "report_id": "uuid-here"
+  }
+}
+```
+
+## Testing Plan
+
+- **Unit tests** for `PushNotificationService` — mock `FirebaseMessaging`, verify `requestPermission` returns correct enum, verify `getToken` is called.
+- **Unit tests** for `_registerToken` — mock `ApiClient`, verify POST body includes all fields.
+- **Unit tests** for deep link handler — push data through `onNotificationTap` stream, verify navigation.
+- **Widget tests** for `ForegroundNotificationBanner` — inject a `RemoteMessage`, verify banner appears and auto-dismisses.
+- **Widget tests** for settings toggle — verify `setPushNotificationsEnabled(false)` calls unregister endpoint.
+- **Integration test** (manual) — send a test FCM message from Firebase Console, verify it appears as a banner in-app and in the system tray when backgrounded. Tap the notification, verify it navigates to the report.
+
+## Notes
+
+- **New dependencies:** `firebase_core` and `firebase_messaging` need to be added to pubspec.yaml. These also require native setup (GoogleService-Info.plist for iOS, google-services.json for Android, CocoaPods update).
+- **No `flutter_local_notifications` needed** — Firebase Messaging handles background notifications natively. For foreground, we use a custom in-app banner (`ForegroundNotificationBanner`) which is simpler and fits the dark theme.
+- **Existing settings providers** — `pushNotificationsEnabledProvider` and `notificationRadiusProvider` already exist in `settings_providers.dart`. This milestone wires them to actual backend calls instead of being local-only state.
+- **`anonymousIdProvider`** serves as the device identifier for FCM registration, consistent with the REST API's `X-Device-ID` header.
+- **Background message handler** must be a top-level function (Dart isolate requirement). It only needs to call `Firebase.initializeApp()` — the system tray handles display.
+- **Deep linking** — the exact routing mechanism depends on whether we add named routes or a router package later. The initial implementation uses `GlobalKey<NavigatorState>` which is straightforward.
+- **Android notification channel** — Firebase Messaging auto-creates a default channel. A custom high-importance channel can be added later for finer control.
+
+## Files
+
+| # | Path | Action |
+|---|------|--------|
+| 1 | `lib/shared/services/push_notification_service.dart` | Create |
+| 2 | `lib/shared/providers/notification_providers.dart` | Create |
+| 3 | `lib/shared/services/deep_link_handler.dart` | Create |
+| 4 | `lib/shared/widgets/foreground_notification_banner.dart` | Create |
+| 5 | `lib/main.dart` | Modify — add Firebase.initializeApp, background handler |
+| 6 | `lib/app.dart` | Modify — watch initNotificationsProvider, add navigatorKey, wrap with banner |
+| 7 | `lib/features/settings/providers/settings_providers.dart` | Modify — add backend sync functions |
+| 8 | `lib/features/settings/presentation/settings_screen.dart` | Modify — wire toggle/radius to new sync functions |
+| 9 | `pubspec.yaml` | Modify — add firebase_core, firebase_messaging |
+| 10 | `ios/Runner/GoogleService-Info.plist` | Create — from Firebase Console |
+| 11 | `android/app/google-services.json` | Create — from Firebase Console |

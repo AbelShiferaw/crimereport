@@ -1,95 +1,230 @@
----
-name: Milestone 6 Map Markers
-overview: Display circular thumbnail markers on the map at crime report locations, with tap detection to log marker info to console.
-todos:
-  - id: m6-marker-widget
-    content: Create CrimeMarker circular thumbnail widget
-    status: pending
-  - id: m6-add-markers
-    content: Add markers to map from mock data
-    status: pending
-  - id: m6-tap
-    content: Implement marker tap detection
-    status: pending
-  - id: m6-verify
-    content: Test markers display and respond to taps
-    status: pending
----
+# Milestone 6: Mapbox Map – Crime Markers
 
-# Milestone 6: Mapbox Map - Crime Markers
+## Status
+Completed
 
 ## Goal
-Show circular video/image thumbnails as markers on the map at each crime location.
+Display per-report image markers on the map — rounded-square thumbnails with crime-type-colored borders — and handle marker taps to navigate to a location feed.
 
 ## Dependencies
-Requires **Milestone 5** complete (map displaying).
+Requires **Milestone 5** complete (map displaying with location puck).
 
-## Implementation
+## What Was Built
+Two main classes extracted from `MapScreen`:
+1. **`MapMarkerManager`** – registers per-report style images on the Mapbox style, builds GeoJSON, and manages clustered source + layers.
+2. **`MarkerImageService`** – downloads thumbnails, crops them to rounded squares with colored borders in a background isolate, and caches results (LRU in-memory + disk via `flutter_cache_manager`).
 
-### 1. Custom Marker Widget
+Each report gets its own Mapbox style image (keyed `marker-{reportId}`) so the unclustered-markers `SymbolLayer` can resolve the correct icon per feature via a `['get', 'imageId']` expression.
+
+## Key Files
+
+| File | Description |
+|---|---|
+| `apps/mobile/lib/features/map/presentation/map_marker_manager.dart` | Registers images, builds GeoJSON, adds clustered source & layers, refreshes data |
+| `apps/mobile/lib/features/map/services/marker_image_service.dart` | Downloads, crops, borders, caches marker images; fallback generation |
+| `apps/mobile/lib/features/map/presentation/map_screen.dart` | Orchestrates marker manager lifecycle and tap interactions |
+| `apps/mobile/lib/features/map/presentation/map_constants.dart` | `MapLayerIds`, `ClusterConfig`, `ZoomScaling` constants |
+| `apps/mobile/lib/core/constants/app_constants.dart` | `mapMarkerSize` (72), `mapMarkerBorderWidth` (4) |
+
+## Implementation Details
+
+### 1. Marker Image Registration
+
+On style load, `MapScreen` tells the marker manager to register images for **all** reports (unfiltered) so that toggling filters never results in missing images:
+
 ```dart
-// lib/features/map/presentation/widgets/crime_marker.dart
-class CrimeMarker extends StatelessWidget {
-  final Report report;
-  final double size;
-  
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: _getBorderColor(report.type), width: 3),
-        boxShadow: [BoxShadow(blurRadius: 4, color: Colors.black45)],
-      ),
-      child: ClipOval(
-        child: CachedNetworkImage(
-          imageUrl: report.media.first.thumbnailUrl ?? report.media.first.url,
-          fit: BoxFit.cover,
-        ),
-      ),
-    );
-  }
+// map_screen.dart – _onStyleLoaded()
+void _onStyleLoaded(StyleLoadedEventData data) async {
+  if (_markersAdded || _markerManager == null) return;
+  _markersAdded = true;
+
+  final allReports = MockDataService.instance.getReports();
+  await _markerManager!.registerMarkerImages(allReports);
+  await _markerManager!.addClusteredSourceAndLayers(_reports);
+  _setupTapInteractions();
 }
 ```
 
-### 2. Add Markers to Map
+`MapMarkerManager.registerMarkerImages` first bulk-preloads all thumbnail URLs in parallel, then registers each image on the Mapbox style:
+
 ```dart
-// In MapScreen
-void _addCrimeMarkers() async {
-  final reports = MockDataService().getReports();
-  
+// map_marker_manager.dart
+Future<void> registerMarkerImages(List<Report> reports) async {
+  final urls = <String>[];
+  final colors = <Color>[];
   for (final report in reports) {
-    await _mapController?.addSymbol(
-      SymbolOptions(
-        geometry: LatLng(report.latitude, report.longitude),
-        iconImage: 'crime-marker',
-        iconSize: 0.5,
-      ),
-      {'reportId': report.id},
-    );
+    final url = report.primaryMedia?.thumbnailUrl ?? report.primaryMedia?.url;
+    if (url != null) {
+      urls.add(url);
+      colors.add(report.type.color);
+    }
   }
+  await _imageService.preloadImages(urls, borderColors: colors);
+  await Future.wait(reports.map(_registerSingleImage));
+}
+
+Future<void> _registerSingleImage(Report report) async {
+  final imageId = getImageId(report.id);  // 'marker-{id}'
+  final imageData = await _getImageData(report);
+  if (imageData == null) return;
+
+  await _mapboxMap.style.addStyleImage(
+    imageId, 1.0,
+    MbxImage(width: _markerSize, height: _markerSize, data: imageData),
+    false, [], [], null,
+  );
+  _registeredImageIds.add(imageId);
 }
 ```
 
-### 3. Marker Tap Detection
+### 2. Image Processing (Rounded Square + Border)
+
+`MarkerImageService` downloads via `flutter_cache_manager`, then processes in a background isolate:
+
 ```dart
-_mapController?.onSymbolTapped.add((symbol) {
-  final reportId = symbol.data?['reportId'];
-  print('Tapped marker: $reportId');
-  // TODO: Navigate to location feed in Milestone 8
-});
+// marker_image_service.dart
+Future<MarkerImageResult> getMarkerImage(
+  String url, {
+  Color borderColor = const Color(0xFFFFFFFF),
+}) async {
+  final cacheKey = '${url}_${borderColor.toARGB32()}';
+  final cached = _processedCache.get(cacheKey);
+  if (cached != null) return MarkerImageResult.success(cached);
+
+  final file = await _cacheManager
+      .getSingleFile(url)
+      .timeout(_timeout, onTimeout: () {
+    throw TimeoutException('Network timeout loading marker image');
+  });
+  final bytes = await file.readAsBytes();
+
+  final processed = await compute(_processRoundedSquareMarker, _MarkerProcessParams(
+    bytes: bytes,
+    borderColorValue: borderColor.toARGB32(),
+    size: AppConstants.mapMarkerSize.toInt(),
+    borderWidth: AppConstants.mapMarkerBorderWidth.toInt(),
+  ));
+
+  _processedCache.put(cacheKey, processed);
+  return MarkerImageResult.success(processed);
+}
 ```
 
-## Deliverable Checklist
-- [ ] Circular markers appear at crime locations
-- [ ] Markers show thumbnail images
-- [ ] Border color matches crime type
-- [ ] Tap on marker logs report ID
-- [ ] Markers render efficiently (no lag)
+The isolate function center-crops the source to a square, resizes to `innerSize`, draws the border as a filled rounded rectangle, then composites the photo inside:
 
-## Files (3 total)
-1. `lib/features/map/presentation/map_screen.dart` - Update
-2. `lib/features/map/presentation/widgets/crime_marker.dart` - Create
-3. `lib/features/map/data/marker_generator.dart` - Create (convert widget to image)
+```dart
+static Uint8List? _processRoundedSquareMarker(_MarkerProcessParams params) {
+  final decoded = img.decodeImage(params.bytes);
+  if (decoded == null) return null;
+
+  final size = params.size;
+  final borderWidth = params.borderWidth;
+  final innerSize = size - (borderWidth * 2);
+
+  // Center-crop to square, resize to innerSize
+  final cropped = img.copyCrop(decoded, ...);
+  final resized = img.copyResize(cropped, width: innerSize, height: innerSize);
+
+  // Create transparent output, draw border rounded rect, composite photo
+  final output = img.Image(width: size, height: size);
+  _fillRoundedRect(output, 0, 0, size, size, outerCornerRadius, borderColorImg);
+
+  for (int y = 0; y < innerSize; y++) {
+    for (int x = 0; x < innerSize; x++) {
+      if (_isInsideRoundedRect(x, y, innerSize, innerSize, innerCornerRadius)) {
+        output.setPixel(x + borderWidth, y + borderWidth, resized.getPixel(x, y));
+      }
+    }
+  }
+
+  return Uint8List.fromList(img.encodePng(output));
+}
+```
+
+When the thumbnail fails to load, a programmatically generated fallback marker is used (dark square with colored border and small center dot).
+
+### 3. Crime-Type Border Colors
+
+Each `ReportType` has a `.color` property. The border color is passed through the entire pipeline — preload, `getMarkerImage`, and the isolate — so markers on the map are visually distinguishable by crime type.
+
+### 4. GeoJSON Feature Structure
+
+Each report maps to a GeoJSON feature with properties that the symbol layer uses:
+
+```dart
+Map<String, dynamic> _buildGeoJsonFeature(int index, Report report) {
+  return {
+    'type': 'Feature',
+    'id': index,
+    'geometry': {
+      'type': 'Point',
+      'coordinates': [report.longitude, report.latitude],
+    },
+    'properties': {
+      'reportId': report.id,
+      'imageId': getImageId(report.id),  // 'marker-{id}'
+      'crimeType': report.type.name,
+      'description': report.description,
+    },
+  };
+}
+```
+
+### 5. Unclustered Markers Layer
+
+Individual markers are rendered via a `SymbolLayer` that reads the `imageId` from feature properties and scales based on zoom:
+
+```dart
+final layer = SymbolLayer(
+  id: MapLayerIds.unclusteredMarkers,
+  sourceId: MapLayerIds.source,
+  filter: ['!', ['has', 'point_count']],
+  iconImageExpression: ['get', 'imageId'],
+  iconSizeExpression: [
+    'interpolate', ['linear'], ['zoom'],
+    5,  ZoomScaling.worldView,   // 0.1
+    8,  ZoomScaling.country,     // 0.2
+    10, ZoomScaling.city,        // 0.4
+    12, ZoomScaling.neighborhood,// 0.6
+    14, ZoomScaling.street,      // 0.8
+  ],
+  iconAllowOverlap: true,
+  iconIgnorePlacement: true,
+);
+```
+
+### 6. Marker Tap Handling
+
+Taps are registered via `TapInteraction` on the unclustered markers layer. The handler finds the report and navigates to the location feed:
+
+```dart
+final markerTap = TapInteraction(
+  FeaturesetDescriptor(layerId: MapLayerIds.unclusteredMarkers),
+  (feature, context) {
+    final reportId = feature.properties['reportId'] as String?;
+    if (reportId == null) return;
+    try {
+      final report = _reports.firstWhere((r) => r.id == reportId);
+      _onMarkerTapped(report);
+    } on StateError {
+      // Report not in list (filtered out)
+    }
+  },
+);
+_mapboxMap!.addInteraction(markerTap, interactionID: MapLayerIds.markerTapInteraction);
+```
+
+### 7. Caching Strategy
+
+- **Disk cache**: `DefaultCacheManager` (HTTP-aware LRU via `flutter_cache_manager`)
+- **In-memory LRU**: Custom `_LruCache<String, Uint8List>` with max 50 entries (~750 KB)
+- **Cache key**: `"${url}_${borderColor.toARGB32()}"` — same URL with different border colors are cached separately
+
+## Testing
+No dedicated unit tests for marker manager or image service. The `MarkerImageService` is designed for testability (injectable via constructor parameter on `MapMarkerManager`).
+
+## Notes
+- The original plan envisioned a Flutter `CrimeMarker` widget rendered to an image bitmap. The actual implementation uses the `image` package in a background isolate — no Flutter widget rendering involved.
+- Markers are **rounded squares** (8% corner radius), not circles as originally planned.
+- All report images are registered at style-load time (not lazily) to avoid pop-in when zooming.
+- The `refreshGeoJsonSource` method allows updating visible markers when crime-type filters change, without re-registering images.

@@ -1,375 +1,320 @@
 # Milestone 30: Launch Prep
 
+## Status
+Not Started
+
 ## Goal
-Prepare the app for production launch - app store assets, privacy policy, final polish, and production infrastructure.
+Harden the application for production launch — finalize production CDK configuration, validate the existing monitoring stack, complete security review, publish legal pages, add splash/onboarding UX, and prepare all app store assets.
 
 ## Dependencies
-Requires **Milestone 29** complete (testing passed).
+Requires **Milestone 29** complete (testing & QA passed).
+Leverages infrastructure already deployed in Milestones 14–18 (CDK stacks, ECS Fargate, Aurora, monitoring).
 
-## Implementation
+## Plan
 
-### 1. App Store Assets
+### 1. Production CDK Configuration Review
 
-**iOS App Store:**
-```
-assets/app_store/ios/
-├── icon_1024x1024.png          # App icon
-├── screenshots/
-│   ├── 6.5_inch/               # iPhone 14 Pro Max
-│   │   ├── 01_feed.png
-│   │   ├── 02_map.png
-│   │   ├── 03_submit.png
-│   │   └── 04_notification.png
-│   ├── 5.5_inch/               # iPhone 8 Plus
-│   └── 12.9_inch/              # iPad Pro
-├── app_preview_video.mov       # Optional
-└── promotional_text.txt
-```
+The full stack is already defined in `infrastructure/aws/bin/crimereport-stack.ts` with these stacks:
 
-**Google Play Store:**
-```
-assets/app_store/android/
-├── icon_512x512.png            # Hi-res icon
-├── feature_graphic_1024x500.png
-├── screenshots/
-│   ├── phone/
-│   │   ├── 01_feed.png
-│   │   ├── 02_map.png
-│   │   ├── 03_submit.png
-│   │   └── 04_notification.png
-│   └── tablet/
-└── short_description.txt       # 80 chars max
-└── full_description.txt        # 4000 chars max
-```
+| Stack | File | Purpose |
+|-------|------|---------|
+| `CrimeReport-Network` | `lib/network/network-stack.ts` | VPC, subnets, NAT Gateway |
+| `CrimeReport-Waf` | `lib/network/waf-stack.ts` | WAF WebACL, rate limiting, managed rules |
+| `CrimeReport-Security` | `lib/network/security-stack.ts` | Security groups (ALB, ECS, DB, Redis) |
+| `CrimeReport-Iam` | `lib/iam/iam-stack.ts` | IAM roles (ECS execution, task) |
+| `CrimeReport-Database` | `lib/data/database-stack.ts` | Aurora Serverless v2 PostgreSQL + PostGIS |
+| `CrimeReport-Cache` | `lib/data/cache-stack.ts` | ElastiCache Redis |
+| `CrimeReport-Media` | `lib/media/media-stack.ts` | S3 + CloudFront, Step Functions (MediaConvert + Rekognition) |
+| `CrimeReport-Compute` | `lib/compute/compute-stack.ts` | ECS Fargate, ALB, ECR, auto-scaling |
+| `CrimeReport-Monitoring` | `lib/monitoring/monitoring-stack.ts` | CloudWatch alarms + operations dashboard |
 
-### 2. App Store Metadata
+**Production hardening tasks:**
 
-**iOS App Store Connect:**
-```yaml
-App Name: ReportCrime
-Subtitle: Anonymous Crime Reporting
-Category: News / Social Networking
-Age Rating: 17+ (Mature/Suggestive Themes)
-Privacy URL: https://reportcrime.app/privacy
-Support URL: https://reportcrime.app/support
-Marketing URL: https://reportcrime.app
+- Review and set production-appropriate values for `ECS_MIN_TASKS`, `ECS_MAX_TASKS`, `ECS_CPU`, `ECS_MEMORY` in `lib/config/constants.ts`. Consider starting with `minCapacity: 2` for high availability.
+- Verify Aurora Serverless v2 ACU min/max scaling for expected load.
+- Confirm WAF rate-limit thresholds in `waf-stack.ts` are appropriate for launch traffic.
+- Add an HTTPS listener to the ALB (ACM certificate for `api.reportcrime.app`). Currently only HTTP/80 is configured in `compute-stack.ts`.
+- Configure Route 53 hosted zone and alias records for `api.reportcrime.app` and `cdn.reportcrime.app`.
+- Enable S3 bucket versioning on the uploads and media buckets for data durability.
+- Verify `dbSecret` rotation is configured in `database-stack.ts`.
 
-Keywords: crime, report, anonymous, safety, neighborhood, alert, community
+**HTTPS listener addition** (planned change to `lib/compute/compute-stack.ts`):
 
-Description: |
-  Report crime anonymously and stay informed about safety in your neighborhood.
-  
-  REPORT ANONYMOUSLY
-  • No account required - completely anonymous
-  • Capture video or photo evidence
-  • Tag location automatically
-  • Your identity is never stored
-  
-  STAY INFORMED
-  • TikTok-style feed of nearby reports
-  • Interactive map with crime locations
-  • Real-time push notifications
-  • Filter by crime type and distance
-  
-  COMMUNITY SAFETY
-  • Upvote and comment on reports
-  • Flag false reports
-  • Help keep your community safe
-  
-  Your privacy is our priority. We never store personal information 
-  or track your identity.
+```typescript
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+
+// In ComputeStack constructor:
+const certificate = acm.Certificate.fromCertificateArn(
+  this, 'ApiCert',
+  'arn:aws:acm:us-east-1:ACCOUNT:certificate/CERT_ID',
+);
+
+this.alb.addListener('HttpsListener', {
+  port: 443,
+  protocol: elbv2.ApplicationProtocol.HTTPS,
+  certificates: [certificate],
+  defaultTargetGroups: [targetGroup],
+});
+
+// Redirect HTTP to HTTPS
+this.listener.addAction('HttpRedirect', {
+  action: elbv2.ListenerAction.redirect({
+    protocol: 'HTTPS',
+    port: '443',
+    permanent: true,
+  }),
+});
 ```
 
-**Google Play Console:**
-```yaml
-App Name: ReportCrime - Anonymous Safety
-Short Description: Report crime anonymously. Stay safe. Protect your community.
-Content Rating: Mature 17+
-Category: News & Magazines / Social
-Privacy Policy: https://reportcrime.app/privacy
+### 2. Validate Existing Monitoring Stack
+
+The monitoring stack (`lib/monitoring/monitoring-stack.ts`) already provides:
+
+- **10 CloudWatch Alarms**: DB CPU (>80%), DB connections (>50), DB memory (<256MB), Redis CPU (>80%), Redis memory (>80%), Redis evictions (>100), ECS CPU (>85%), ECS memory (>85%), ALB 5xx (>10), ALB latency (>2s)
+- **Operations Dashboard** (`crimereport-operations`): graphs for DB, Redis, ECS, and ALB metrics with alarm annotations and an alarm status widget
+
+**Additional monitoring to add for launch:**
+
+- Add an SNS topic for alarm notifications (email + PagerDuty/Slack webhook).
+- Add custom CloudWatch metrics from the API (via Pino structured logs + metric filters):
+  - `ReportsCreated` — count of new reports per minute
+  - `UploadsCompleted` — count of media uploads completing the pipeline
+  - `WebSocketConnections` — gauge of active Socket.io connections
+- Add a dashboard row for these custom application-level metrics.
+- Configure CloudWatch Log Insights saved queries for common debugging patterns.
+
+```typescript
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
+import * as actions from 'aws-cdk-lib/aws-cloudwatch-actions';
+
+const alarmTopic = new sns.Topic(this, 'AlarmTopic', {
+  topicName: `${PROJECT_PREFIX}-alarms`,
+});
+
+alarmTopic.addSubscription(
+  new snsSubscriptions.EmailSubscription('ops@reportcrime.app'),
+);
+
+// Attach to all existing alarms
+for (const alarm of [dbCpuAlarm, dbConnectionsAlarm, /* ... all 10 ... */]) {
+  alarm.addAlarmAction(new actions.SnsAction(alarmTopic));
+  alarm.addOkAction(new actions.SnsAction(alarmTopic));
+}
 ```
 
-### 3. Privacy Policy & Terms
-```markdown
-<!-- docs/privacy-policy.md -->
+### 3. Security Review
 
-# Privacy Policy
+**Backend security checklist:**
 
-Last updated: [DATE]
+- [ ] Helmet middleware is active (`backend/api/src/app.ts` — already configured)
+- [ ] CORS origin is locked to production domain (verify `config.corsOrigin`)
+- [ ] Rate limiting on report creation (already `MAX_DAILY_REPORTS = 10` per device in `routes/reports.ts`)
+- [ ] Rate limiting on comment creation (already `MAX_DAILY_COMMENTS = 50` per device)
+- [ ] Device flagging prevents abuse (already checks `device.flagged` before create/upload)
+- [ ] WAF rate limiting on ALB (already in `waf-stack.ts`)
+- [ ] S3 presigned URL expiration is reasonable (verify in `lib/s3.ts`)
+- [ ] Database credentials stored in Secrets Manager (already — `dbSecret` injected via ECS secrets)
+- [ ] No secrets in environment variables or source code
+- [ ] Zod validation on all request inputs (already — `validate` middleware on every route)
+- [ ] SQL injection prevention (already — parameterized queries via `pg` pool in all models)
+- [ ] Content moderation pipeline active (Rekognition in Step Functions media pipeline)
 
-## Information We Collect
+**Infrastructure security checklist:**
 
-ReportCrime is designed with privacy as a core principle. We collect 
-minimal information necessary to provide our service:
+- [ ] ECS tasks in private subnets with no public IP (already — `AssignPublicIp: DISABLED` in `compute-stack.ts`)
+- [ ] DB and Redis security groups only allow ECS ingress (verify in `security-stack.ts`)
+- [ ] ALB security group restricts to 80/443 ingress
+- [ ] ECR image scanning on push (already — `imageScanOnPush: true`)
+- [ ] CloudWatch logs encrypted at rest
+- [ ] S3 bucket public access blocked (verify `blockPublicAccess` on uploads and media buckets)
 
-### Device Identifier
-- A random, anonymous identifier generated on your device
-- Not linked to your Apple ID, Google Account, or any personal information
-- Used only to prevent spam and enable features like upvoting
+### 4. Production Environment Variables
 
-### Location Data
-- Used to show nearby crime reports
-- Used to tag report locations
-- Never stored with personally identifiable information
-- You control location sharing through device settings
+Create environment configuration for the ECS task definition. These values are already partially set in `compute-stack.ts` — verify completeness:
 
-### Report Content
-- Photos and videos you choose to submit
-- Crime type and description you provide
-- Approximate location of the incident
-
-## Information We Don't Collect
-- Name, email, or phone number
-- Precise device location history
-- Browsing or app usage patterns
-- Contact lists or personal files
-
-## Data Retention
-- Reports are retained indefinitely for community safety
-- You can delete your comments at any time
-- Device identifiers can be reset by reinstalling the app
-
-## Third-Party Services
-- AWS for hosting and storage
-- Firebase for push notifications
-- Mapbox for map display
-
-## Contact
-privacy@reportcrime.app
+```typescript
+// Already configured in compute-stack.ts container environment:
+environment: {
+  NODE_ENV: 'production',
+  PORT: '3000',
+  REDIS_HOST: redisEndpoint,
+  REDIS_PORT: redisPort,
+  S3_UPLOADS_BUCKET: s3UploadsBucket,
+  S3_MEDIA_BUCKET: s3MediaBucket,
+  CDN_DOMAIN: cdnDomain,
+},
+secrets: {
+  DATABASE_URL: ecs.Secret.fromSecretsManager(dbSecret),
+},
 ```
 
-### 4. Production Configuration
+**Additional env vars to add:**
 
-**Environment Variables:**
+```typescript
+environment: {
+  // ... existing ...
+  LOG_LEVEL: 'info',
+  CORS_ORIGIN: 'https://reportcrime.app',
+  WS_PING_INTERVAL: '25000',
+  WS_PING_TIMEOUT: '5000',
+},
+```
+
+### 5. Database Migration for Production
+
+Run `node-pg-migrate` against the production Aurora cluster. Migrations live in `backend/api/migrations/`.
+
 ```bash
-# .env.production
-NODE_ENV=production
-API_BASE_URL=https://api.reportcrime.app
-WS_BASE_URL=wss://api.reportcrime.app
-
-# AWS
-AWS_REGION=us-east-1
-S3_UPLOADS_BUCKET=reportcrime-uploads-prod
-S3_MEDIA_BUCKET=reportcrime-media-prod
-CDN_DOMAIN=cdn.reportcrime.app
-
-# Database
-DATABASE_URL=postgresql://...
-REDIS_URL=redis://...
-
-# Firebase
-FIREBASE_PROJECT_ID=reportcrime-prod
-
-# Monitoring
-SENTRY_DSN=https://...
+# From backend/api/
+DATABASE_URL=$PRODUCTION_DATABASE_URL npm run migrate:up
 ```
 
-**Flutter Build Configuration:**
-```dart
-// lib/core/config/environment.dart
+Verify PostGIS extension is enabled, spatial indexes exist on the `reports` table, and all migration files have been applied.
 
+### 6. Flutter Production Build Configuration
+
+Create or update `apps/mobile/lib/core/config/environment.dart`:
+
+```dart
 enum Environment { dev, staging, prod }
 
 class AppConfig {
   static Environment get environment {
     const env = String.fromEnvironment('ENV', defaultValue: 'dev');
     switch (env) {
-      case 'prod': return Environment.prod;
-      case 'staging': return Environment.staging;
-      default: return Environment.dev;
+      case 'prod':
+        return Environment.prod;
+      case 'staging':
+        return Environment.staging;
+      default:
+        return Environment.dev;
     }
   }
-  
+
   static String get apiBaseUrl {
     switch (environment) {
       case Environment.prod:
         return 'https://api.reportcrime.app';
       case Environment.staging:
         return 'https://staging-api.reportcrime.app';
-      default:
+      case Environment.dev:
         return 'http://localhost:3000';
+    }
+  }
+
+  static String get wsBaseUrl {
+    switch (environment) {
+      case Environment.prod:
+        return 'wss://api.reportcrime.app';
+      case Environment.staging:
+        return 'wss://staging-api.reportcrime.app';
+      case Environment.dev:
+        return 'ws://localhost:3000';
     }
   }
 }
 ```
 
-### 5. Monitoring & Analytics
+### 7. App Store Assets
 
-**Error Tracking (Sentry):**
-```dart
-// lib/main.dart
+**iOS App Store:**
 
-import 'package:sentry_flutter/sentry_flutter.dart';
-
-Future<void> main() async {
-  await SentryFlutter.init(
-    (options) {
-      options.dsn = 'https://...@sentry.io/...';
-      options.environment = AppConfig.environment.name;
-      options.tracesSampleRate = 0.2;
-    },
-    appRunner: () => runApp(
-      ProviderScope(child: ReportCrimeApp()),
-    ),
-  );
-}
+```
+assets/app_store/ios/
+├── icon_1024x1024.png
+├── screenshots/
+│   ├── 6.7_inch/          # iPhone 15 Pro Max (1290×2796)
+│   │   ├── 01_feed.png
+│   │   ├── 02_map.png
+│   │   ├── 03_submit.png
+│   │   └── 04_settings.png
+│   └── 6.1_inch/          # iPhone 15 Pro (1179×2556)
+└── promotional_text.txt
 ```
 
-**Backend Monitoring:**
-```javascript
-// backend/src/middleware/monitoring.js
+**Google Play Store:**
 
-const Sentry = require('@sentry/node');
-
-Sentry.init({
-  dsn: process.env.SENTRY_DSN,
-  environment: process.env.NODE_ENV,
-  tracesSampleRate: 0.1,
-});
-
-// Add to Express
-app.use(Sentry.Handlers.requestHandler());
-app.use(Sentry.Handlers.errorHandler());
+```
+assets/app_store/android/
+├── icon_512x512.png
+├── feature_graphic_1024x500.png
+├── screenshots/
+│   └── phone/
+│       ├── 01_feed.png
+│       ├── 02_map.png
+│       ├── 03_submit.png
+│       └── 04_settings.png
+├── short_description.txt   # 80 chars max
+└── full_description.txt    # 4000 chars max
 ```
 
-### 6. Final UI Polish
+### 8. Privacy Policy & Terms of Service
 
-**Splash Screen:**
-```dart
-// lib/features/splash/presentation/splash_screen.dart
+Publish at `https://reportcrime.app/privacy` and `https://reportcrime.app/terms`.
 
-class SplashScreen extends StatefulWidget {
-  @override
-  State<SplashScreen> createState() => _SplashScreenState();
-}
+Key disclosures for app store compliance:
 
-class _SplashScreenState extends State<SplashScreen>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      duration: Duration(milliseconds: 1500),
-      vsync: this,
-    )..forward();
-    
-    // Navigate after animation
-    Future.delayed(Duration(seconds: 2), () {
-      Navigator.pushReplacement(
-        context,
-        FadePageRoute(page: AppShell()),
-      );
-    });
-  }
-  
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Color(0xFF121212),
-      body: Center(
-        child: FadeTransition(
-          opacity: _controller,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.shield, size: 80, color: Colors.red),
-              SizedBox(height: 16),
-              Text(
-                'ReportCrime',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-```
+- **Data collected**: anonymous device identifier (UUID), location (when in use), user-submitted photos/videos/text
+- **Data NOT collected**: name, email, phone, Apple ID, Google account, browsing history
+- **Third-party services**: AWS (hosting, storage, CDN, media processing), Mapbox (map tiles)
+- **Data retention**: reports retained indefinitely; device identifiers can be reset by reinstalling
+- **Content moderation**: automated via AWS Rekognition; manual review for flagged content
 
-**Onboarding (First Launch):**
-```dart
-// lib/features/onboarding/presentation/onboarding_screen.dart
+### 9. Splash Screen & Onboarding
 
-class OnboardingScreen extends StatefulWidget {
-  @override
-  State<OnboardingScreen> createState() => _OnboardingScreenState();
-}
+**Splash screen** (`apps/mobile/lib/features/splash/presentation/splash_screen.dart`):
 
-// Show permission requests with explanations
-// - Location: "To show nearby reports"
-// - Camera: "To capture evidence"
-// - Notifications: "To alert you of nearby crimes"
-```
+- Animated app logo with fade-in
+- Check API connectivity via `/health/ready`
+- Navigate to onboarding (first launch) or `AppShell` (returning user)
 
-### 7. Release Checklist
+**Onboarding** (`apps/mobile/lib/features/onboarding/presentation/onboarding_screen.dart`):
 
-```markdown
-## Pre-Release Checklist
+- Page 1: "Report Anonymously" — explain no-account design
+- Page 2: "Stay Informed" — show feed/map preview
+- Page 3: Permissions — request Location (when in use), Camera, Notifications with clear explanations
+- Store `onboarding_complete` flag in `shared_preferences`
 
-### Code
-- [ ] All tests passing
-- [ ] No compiler warnings
-- [ ] Debug logging removed
-- [ ] API pointing to production
+### 10. Final Polish
 
-### iOS
-- [ ] Bundle ID correct (com.reportcrime.app)
-- [ ] Version number incremented
-- [ ] Build number incremented
-- [ ] Signing certificate valid
-- [ ] Push notification entitlement
-- [ ] Location usage descriptions
-
-### Android
-- [ ] Package name correct
-- [ ] Version code incremented
-- [ ] Signing key secured
-- [ ] ProGuard/R8 configured
-- [ ] Permissions declared
-
-### Backend
-- [ ] Production database migrated
-- [ ] Environment variables set
-- [ ] SSL certificates valid
-- [ ] Rate limits configured
-- [ ] Monitoring active
-
-### Store
-- [ ] Screenshots uploaded
-- [ ] Descriptions written
-- [ ] Privacy policy URL valid
-- [ ] Age rating set
-- [ ] Categories selected
-```
+- Remove all debug prints and `TODO` comments from production code paths
+- Verify Pino log level is `info` in production (not `debug` or `trace`)
+- Confirm `flutter build` with `--release` produces no warnings
+- Test deep link handling if applicable
+- Verify app icon renders correctly on both platforms
+- Test dark mode / light mode if supported (current theme in `apps/mobile/lib/core/theme/`)
 
 ## Deliverable Checklist
-- [ ] App icons in all required sizes
-- [ ] Screenshots for all device sizes
-- [ ] App Store descriptions written
-- [ ] Privacy policy published
-- [ ] Terms of service published
-- [ ] Production environment configured
-- [ ] Sentry error tracking active
-- [ ] Splash screen animated
-- [ ] Onboarding flow complete
-- [ ] All debug code removed
-- [ ] Release checklist completed
+- [ ] HTTPS listener added to ALB with ACM certificate
+- [ ] Route 53 DNS configured for API and CDN domains
+- [ ] ECS task count and scaling reviewed for production load
+- [ ] Aurora Serverless v2 ACU limits set for production
+- [ ] SNS alarm notifications configured and tested
+- [ ] Security review checklist completed (all items passed)
+- [ ] Production database migrations applied successfully
+- [ ] Environment configuration deployed via CDK
+- [ ] App store screenshots captured for all required sizes
+- [ ] Privacy policy and terms of service published
+- [ ] Splash screen and onboarding flow implemented
+- [ ] All debug code and verbose logging removed
+- [ ] Production build compiles cleanly on both platforms
 
-## Files (10 total)
-1. `assets/app_store/ios/*` - iOS store assets
-2. `assets/app_store/android/*` - Android store assets
-3. `docs/privacy-policy.md` - Privacy policy
-4. `docs/terms-of-service.md` - Terms of service
-5. `lib/core/config/environment.dart` - Environment config
-6. `lib/features/splash/presentation/splash_screen.dart` - Splash
-7. `lib/features/onboarding/presentation/onboarding_screen.dart` - Onboarding
-8. `.env.production` - Production env vars
-9. `backend/.env.production` - Backend prod env
-10. `docs/release-checklist.md` - Release checklist
+## Notes
+- **Monitoring is already substantial** — the existing `monitoring-stack.ts` covers DB, Redis, ECS, and ALB with 10 alarms and an operations dashboard. This milestone adds notification routing and application-level metrics.
+- **No CI/CD yet** — production deploys are manual via `cdk deploy --all`. Milestone 24.5 will automate this.
+- **HTTPS requires an ACM certificate** — must be in `us-east-1` for CloudFront, and the same region as the ALB for the API. Request and validate the cert before deploying.
+- **Mapbox API key** — ensure the production token is configured in the Flutter app's `.env` and has appropriate usage limits.
+- **Consider a staging environment** — deploy the same CDK stacks with a different prefix (e.g., `crimereport-staging`) for pre-production validation.
+
+## Files (estimated 10 new/modified)
+1. `infrastructure/aws/lib/compute/compute-stack.ts` — add HTTPS listener, HTTP redirect
+2. `infrastructure/aws/lib/monitoring/monitoring-stack.ts` — add SNS topic, alarm actions, custom metrics
+3. `infrastructure/aws/lib/config/constants.ts` — update production scaling values
+4. `apps/mobile/lib/core/config/environment.dart` — new
+5. `apps/mobile/lib/features/splash/presentation/splash_screen.dart` — new
+6. `apps/mobile/lib/features/onboarding/presentation/onboarding_screen.dart` — new
+7. `docs/privacy-policy.md` — new
+8. `docs/terms-of-service.md` — new
+9. `assets/app_store/ios/*` — new (screenshots, icon)
+10. `assets/app_store/android/*` — new (screenshots, icon, feature graphic)
