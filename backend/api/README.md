@@ -39,6 +39,7 @@ src/
 │   ├── validate.ts        # Zod schema validation
 │   ├── request-id.ts      # x-request-id propagation
 │   ├── request-logger.ts  # pino-http request logging
+│   ├── rate-limit.ts      # IP-based rate limiting (global + write)
 │   ├── error-handler.ts   # Centralized error responses
 │   └── not-found.ts       # 404 catch-all
 ├── models/                # Database query functions (raw SQL via pg)
@@ -76,7 +77,7 @@ Base URL: `/api/v1`
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Liveness probe (always 200 if process is running) |
-| GET | `/health/ready` | Readiness probe (checks DB + Redis connectivity) |
+| GET | `/health/ready` | Readiness probe (checks DB + Redis + Socket.io adapter) |
 
 ### Reports
 
@@ -403,10 +404,17 @@ Authentication requires a valid `deviceId` (1-64 chars) in `socket.handshake.aut
 
 | Event | Payload | Description |
 |-------|---------|-------------|
-| `subscribe:location` | `{ lat: number, lng: number }` | Join a geo-grid room to receive nearby report updates |
+| `subscribe:location` | `{ lat: number, lng: number }` | Join a geo-grid room. Validates lat (-90 to 90) and lng (-180 to 180). |
 | `unsubscribe:location` | -- | Leave the current location room |
-| `subscribe:report` | `reportId: string` | Watch a specific report for comments/upvotes |
+| `subscribe:report` | `reportId: string` | Watch a specific report for comments/upvotes (max 50 per connection) |
 | `unsubscribe:report` | `reportId: string` | Stop watching a report |
+
+### Connection Limits
+
+| Limit | Value |
+|-------|-------|
+| Max concurrent connections per device | 3 |
+| Max report room subscriptions per socket | 50 |
 
 ### Server → Client Events
 
@@ -422,7 +430,9 @@ Locations are mapped to a 0.1-degree (~11 km) grid. When a report becomes active
 
 ### Scaling
 
-The `@socket.io/redis-adapter` uses Redis Pub/Sub to synchronize broadcasts across all ECS Fargate tasks, so any server instance can emit to clients connected to any other instance.
+The `@socket.io/redis-adapter` uses Redis Pub/Sub to synchronize broadcasts across all ECS Fargate tasks, so any server instance can emit to clients connected to any other instance. The adapter connects with TLS in production to match ElastiCache's transit encryption, and uses a 3-attempt retry loop. Its health is reported in the `/health/ready` endpoint.
+
+The adapter connects asynchronously in the background -- the HTTP server starts immediately without waiting for Redis, so ECS health checks pass before the adapter is ready.
 
 ---
 
@@ -447,6 +457,8 @@ All errors follow a consistent format:
 
 ## Rate Limits
 
+### Device-Based Limits
+
 | Action | Limit | Window |
 |--------|-------|--------|
 | Create reports | 10 per device | Per day |
@@ -454,6 +466,17 @@ All errors follow a consistent format:
 | Media per report | 5 files max | -- |
 
 Flagged devices are blocked from creating reports, comments, and uploading media.
+
+### HTTP Rate Limiting (IP-Based)
+
+Application-level throttling via `express-rate-limit`, complementing AWS WAF (2000 req/5min per IP):
+
+| Scope | Limit | Applied To |
+|-------|-------|------------|
+| Global | 100 req/min per IP | All `/api/v1` routes |
+| Writes | 20 req/min per IP | All POST endpoints |
+
+Both limiters are disabled in development. Returns `429 Too Many Requests` when exceeded.
 
 ## Environment Variables
 

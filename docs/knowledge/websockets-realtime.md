@@ -99,12 +99,12 @@ Some corporate WiFi networks and firewalls block WebSocket connections. Socket.i
 This is the key feature for our app. Socket.io lets you group connections into named "rooms" and broadcast to an entire room at once:
 
 ```
-Room "location:37.7:-122.4:10000"
+Room "location:37.7:-122.4"
 ├── User A's socket
 ├── User B's socket
 └── User C's socket
 
-io.to("location:37.7:-122.4:10000").emit("report:new", data)
+io.to("location:37.7:-122.4").emit("report:new", data)
 → All three users receive the event simultaneously
 ```
 
@@ -140,7 +140,7 @@ Instead, we divide the world into a **grid** of 0.1-degree cells (~11km squares)
 37.6 ─────┼──────────┼──────────┼─────
 ```
 
-A user at (37.75, -122.42) falls into Cell A. Their room name is `location:37.7:-122.5:10000`.
+A user at (37.75, -122.42) falls into Cell A. Their room name is `location:37.7:-122.5`.
 
 The grid cell is calculated by flooring to the nearest 0.1:
 
@@ -180,7 +180,7 @@ Room "report:550e8400-..."
 └── User who just opened the report
 ```
 
-This room receives `comment:new`, `report:upvote`, and `media:ready` events. Only people actively looking at that report get these updates -- not everyone nearby.
+This room receives `comment:new` and `report:upvote` events. Only people actively looking at that report get these updates -- not everyone nearby.
 
 ---
 
@@ -255,14 +255,22 @@ Let's trace what happens when User A creates a report, and User B (on a differen
    - Validates request (Zod)
    - Checks device not flagged
    - Checks rate limit
-   - INSERT INTO reports ... (PostgreSQL)
+   - INSERT INTO reports ... (PostgreSQL) with status = 'processing'
    - Returns 201 to User A
+   - (No broadcast yet — report is not active until media is processed)
+         │
+         ▼
+3b. Media upload + processing (Steps Functions pipeline)
+   - User uploads media via presigned S3 URL
+   - Step Functions: Rekognition moderation → MediaConvert transcoding
+   - Client polls GET /reports/:id/media/status
+   - When all media transitions to 'active', report status → 'active'
    - Calls broadcast.broadcastNewReport(report)  ← fire-and-forget
          │
          ▼
 4. broadcast.ts → broadcastNewReport()
    - Calculates overlapping grid cells for (37.77, -122.41)
-   - Calls io.to("location:37.7:-122.5:10000").emit("report:new", {...})
+   - Calls io.to("location:37.7:-122.5").emit("report:new", {...})
    - Also emits to 8 neighboring grid cells
          │
          ▼
@@ -279,7 +287,7 @@ Let's trace what happens when User A creates a report, and User B (on a differen
 7. Socket.io Redis Adapter (on Task 2)
    - Receives message from Redis subscription
    - Checks which local sockets are in the matching rooms
-   - User B is in room "location:37.7:-122.5:10000"
+   - User B is in room "location:37.7:-122.5"
          │
          ▼
 8. Task 2 sends WebSocket frame to User B
@@ -456,7 +464,47 @@ Each broadcast adds a Redis PUBLISH command (~0.1ms). With thousands of broadcas
 | `unsubscribe:location` | Client → Server | App backgrounds | -- |
 | `subscribe:report` | Client → Server | User opens a report | -- |
 | `unsubscribe:report` | Client → Server | User closes a report | -- |
-| `report:new` | Server → Client | New report created | Geo-grid rooms |
+| `report:new` | Server → Client | Report media processed and status becomes `active` | Geo-grid rooms (3x3 overlap) |
 | `comment:new` | Server → Client | Comment added | `report:{id}` |
 | `report:upvote` | Server → Client | Upvote toggled | `report:{id}` |
-| `media:ready` | Server → Client | Media processing done | `report:{id}` |
+
+---
+
+## Edge Cases & Limits
+
+### Input Validation
+
+- `subscribe:location` validates that `lat` and `lng` are numbers within valid ranges (-90/90 and -180/180). Invalid data is silently ignored.
+
+### Connection & Room Limits
+
+| Limit | Value | Enforcement |
+|-------|-------|-------------|
+| Concurrent connections per device | 3 | `connectionLimitMiddleware` — in-memory `Map<deviceId, count>`, decremented on disconnect |
+| Report room subscriptions per socket | 50 | Checked in `subscribe:report` handler — silently ignores if at cap |
+
+### Double-Broadcast Prevention
+
+`report:new` is guarded by `report.status !== 'active'`. Only the first poll request to see the media-ready transition triggers the broadcast. Subsequent poll requests see the report is already `active` and skip.
+
+---
+
+## Deployment Notes
+
+### Redis TLS
+
+ElastiCache has transit encryption enabled (`TransitEncryptionEnabled: true`). Both the application Redis client and the Socket.io adapter clients connect with `tls: config.isProd`.
+
+### Non-Blocking Startup
+
+`initSocket()` is synchronous — it creates the Socket.io server and registers middleware, then fires `connectRedisAdapter()` in the background without awaiting it. The HTTP server starts listening immediately so ECS container health checks pass before the adapter is ready.
+
+The adapter uses a 3-attempt retry loop with 2-second delays. Its health is tracked via `isRedisAdapterHealthy()` and reported in `/health/ready` as `socketAdapter: connected | disconnected`.
+
+### Graceful Shutdown Order
+
+1. `shutdownSocket()` — closes all WebSocket connections (clients get a disconnect event)
+2. `httpServer.close()` — stops accepting new HTTP requests, drains in-flight ones
+3. `pool.end()` — drains PostgreSQL connection pool
+4. `disconnectRedis()` — closes Redis connection
+5. Force exit after 10 seconds if stuck

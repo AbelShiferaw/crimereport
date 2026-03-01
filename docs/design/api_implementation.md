@@ -186,28 +186,19 @@ The server starts in `src/index.ts`:
 ```typescript
 // src/index.ts
 import { createServer } from 'http';
-import { Server as SocketServer } from 'socket.io';
 import app from './app';
+import { initSocket, shutdownSocket } from './lib/socket';
 
 const httpServer = createServer(app);
 
-const io = new SocketServer(httpServer, {
-  cors: { origin: config.corsOrigin, methods: ['GET', 'POST'] },
-});
-
-io.on('connection', (socket) => {
-  logger.info({ socketId: socket.id }, 'client connected');
-  socket.on('disconnect', () => {
-    logger.info({ socketId: socket.id }, 'client disconnected');
-  });
-});
+initSocket(httpServer); // synchronous — registers Socket.io, starts Redis adapter in background
 
 httpServer.listen(config.port, () => {
   logger.info({ port: config.port, env: config.nodeEnv }, 'CrimeReport API started');
 });
 ```
 
-The HTTP server wraps the Express app, and Socket.io attaches to it. Both HTTP and WebSocket traffic share the same port. Socket.io is currently in basic mode (connect/disconnect logging). Milestone 23 adds the Redis adapter and geo-based rooms.
+The HTTP server wraps the Express app, and Socket.io attaches to it. Both HTTP and WebSocket traffic share the same port. `initSocket()` is synchronous -- it creates the Socket.io server, registers auth and connection-limit middleware, sets up event handlers, and fires off the Redis adapter connection in the background. The HTTP server starts listening immediately so ECS container health checks pass before the adapter is ready.
 
 ---
 
@@ -241,7 +232,7 @@ app.use(requestLogger);
 
 // 7. Routes
 app.use(healthRouter);              // GET /health, GET /health/ready
-app.use('/api/v1', apiRouter);      // All API routes under /api/v1
+app.use('/api/v1', globalLimiter, apiRouter); // All API routes under /api/v1 (100 req/min per IP)
 
 // 8. 404 catch-all — any unmatched route
 app.use(notFoundHandler);
@@ -694,6 +685,7 @@ export async function getClient(): Promise<RedisClientType> {
     socket: {
       host: config.redis.host,
       port: config.redis.port,
+      tls: config.isProd,
       reconnectStrategy: (retries) => Math.min(retries * 100, 5_000),
     },
   });
@@ -703,9 +695,9 @@ export async function getClient(): Promise<RedisClientType> {
 }
 ```
 
-The reconnect strategy uses linear backoff capped at 5 seconds.
+The reconnect strategy uses linear backoff capped at 5 seconds. In production, `tls: true` is required because ElastiCache has transit encryption enabled.
 
-Currently Redis is only used for health checks. Milestone 23 adds the Socket.io Redis adapter for cross-task pub/sub.
+Redis is used for health checks and for the Socket.io Redis adapter (`@socket.io/redis-adapter`), which creates separate pub/sub clients for cross-task broadcast synchronization. Both the application client and the adapter clients use the same TLS configuration.
 
 ---
 
@@ -976,6 +968,25 @@ if (device.report_count_today >= MAX_DAILY_REPORTS) {
 | Comments | 50/day | Per device |
 | Media per report | 5 | Per report |
 
+### HTTP Rate Limiting (`middleware/rate-limit.ts`)
+
+In addition to device-based limits, the API uses `express-rate-limit` for IP-based HTTP throttling. This complements AWS WAF's IP-based rule (2000 req/5min) with finer-grained application-level control:
+
+| Limiter | Limit | Scope | Applied To |
+|---------|-------|-------|------------|
+| `globalLimiter` | 100 req/min | Per IP | All `/api/v1` routes |
+| `writeLimiter` | 20 req/min | Per IP | All POST endpoints (reports, comments, upvotes, uploads, flags) |
+
+Both limiters are skipped in development (`config.isDev`). When the limit is exceeded, the response is `429 Too Many Requests`.
+
+### WebSocket Connection Limits (`lib/socket.ts`)
+
+| Limit | Value | Scope |
+|-------|-------|-------|
+| Concurrent connections | 3 | Per device |
+| Report room subscriptions | 50 | Per socket |
+| Lat/lng validation | -90/90, -180/180 | Per `subscribe:location` event |
+
 ---
 
 ## Transactional Operations
@@ -1020,13 +1031,20 @@ Always returns 200 if the process is running. Used by the ECS container health c
 
 ### GET /health/ready (Readiness)
 
-Checks PostgreSQL and Redis connectivity. Returns 503 if either is down:
+Checks PostgreSQL, Redis, and the Socket.io Redis adapter. Returns 503 if any service is down:
 
 ```typescript
 const [db, redis] = await Promise.all([checkDb(), checkRedis()]);
+const socketAdapter = isRedisAdapterHealthy();
+const allHealthy = db && redis && socketAdapter;
+
 res.status(allHealthy ? 200 : 503).json({
   status: allHealthy ? 'ok' : 'degraded',
-  checks: { db: db ? 'connected' : 'disconnected', redis: redis ? 'connected' : 'disconnected' },
+  checks: {
+    db: db ? 'connected' : 'disconnected',
+    redis: redis ? 'connected' : 'disconnected',
+    socketAdapter: socketAdapter ? 'connected' : 'disconnected',
+  },
 });
 ```
 
@@ -1095,13 +1113,14 @@ When the process receives `SIGTERM` (ECS task stop) or `SIGINT` (Ctrl+C):
 function shutdown(signal: string) {
   logger.info({ signal }, 'shutdown signal received');
 
-  httpServer.close(async () => {       // 1. Stop accepting new HTTP connections
-    io.close(async () => {             // 2. Close WebSocket connections
-      await pool.end();                // 3. Drain PostgreSQL connection pool
-      await disconnectRedis();         // 4. Close Redis connection
-      process.exit(0);
+  shutdownSocket()                     // 1. Close WebSocket connections (sends disconnect to clients)
+    .finally(() => {
+      httpServer.close(async () => {   // 2. Stop accepting new HTTP connections
+        await pool.end();              // 3. Drain PostgreSQL connection pool
+        await disconnectRedis();       // 4. Close Redis connection
+        process.exit(0);
+      });
     });
-  });
 
   setTimeout(() => {
     logger.error('graceful shutdown timed out, forcing exit');
@@ -1110,7 +1129,7 @@ function shutdown(signal: string) {
 }
 ```
 
-This ensures in-flight requests complete before the process exits, and the 10-second timeout prevents zombie processes.
+Socket.io is closed first so clients receive a clean disconnect event and can reconnect to another task. The HTTP server then drains in-flight REST requests. The 10-second timeout prevents zombie processes.
 
 ---
 
@@ -1274,7 +1293,7 @@ src/lib/
 └── broadcast.ts   # Fire-and-forget broadcast helpers called from route handlers
 ```
 
-Socket.io is initialised in `index.ts` with `await initSocket(httpServer)` before the server starts listening. This wraps the existing Node.js HTTP server with the Socket.io transport layer.
+Socket.io is initialised in `index.ts` with `initSocket(httpServer)` (synchronous). The Redis adapter connects asynchronously in the background so the HTTP server starts listening immediately.
 
 ### How It Works
 
@@ -1286,16 +1305,17 @@ Socket.io is initialised in `index.ts` with `await initSocket(httpServer)` befor
 
 4. **Geo-Grid Fan-Out**: For `report:new`, `overlappingRooms()` calculates the 3x3 grid of neighboring cells around the report's location and emits to all of them, ensuring users near grid boundaries receive the update.
 
-5. **Redis Adapter**: In production, `@socket.io/redis-adapter` uses Redis Pub/Sub to synchronize broadcasts across all ECS Fargate tasks. Any server can emit to clients connected to any other server. Falls back to in-memory for local development.
+5. **Redis Adapter**: In production, `@socket.io/redis-adapter` uses Redis Pub/Sub (with TLS via `tls: config.isProd`) to synchronize broadcasts across all ECS Fargate tasks. Any server can emit to clients connected to any other server. Connection uses a 3-attempt retry loop with 2s delay. Health is tracked via `isRedisAdapterHealthy()` and exposed in `/health/ready`. Falls back to in-memory for local development.
 
 ### Key Implementation Details
 
 **`lib/socket.ts`** exports:
-- `initSocket(httpServer)` — Creates Socket.io server, connects Redis adapter, registers auth middleware and event handlers
+- `initSocket(httpServer)` — Creates Socket.io server, registers middleware and event handlers, fires Redis adapter connection in the background
 - `getIO()` — Returns the Socket.io instance (throws if not initialised)
+- `isRedisAdapterHealthy()` — Returns adapter connection status for health checks
 - `locationRoom(lat, lng)` — Maps coordinates to grid cell string
 - `overlappingRooms(lat, lng)` — Returns 3x3 grid of room strings around a point
-- `shutdownSocket()` — Gracefully closes all connections
+- `shutdownSocket()` — Gracefully closes all connections and clears device tracking
 
 **`lib/broadcast.ts`** exports:
 - `broadcastNewReport(report)` — Emits `report:new` to all overlapping geo-rooms

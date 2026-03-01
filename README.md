@@ -103,7 +103,8 @@ Full endpoint documentation: [backend/api/README.md](backend/api/README.md)
 | A: Flutter App | 1-13 | Completed |
 | B: AWS Infrastructure | 14-17 | Completed |
 | C: Backend API | 18-22 | Completed |
-| C: Backend API (cont.) | 23-24 | Not started |
+| C: Backend API (cont.) | 23 | Completed |
+| C: Backend API (cont.) | 24 | Not started |
 | C.5: CI/CD | 24.5 | Not started |
 | D: Integration | 25-28 | Not started |
 | E: Testing & Launch | 29-31 | Not started |
