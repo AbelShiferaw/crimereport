@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import { config } from './config';
 import { requestId } from './middleware/request-id';
 import { requestLogger } from './middleware/request-logger';
+import { globalLimiter } from './middleware/rate-limit';
 import { notFoundHandler } from './middleware/not-found';
 import { errorHandler } from './middleware/error-handler';
 import healthRouter from './routes/health';
@@ -21,7 +22,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use(requestLogger);
 
 app.use(healthRouter);
-app.use('/api/v1', apiRouter);
+app.use('/api/v1', globalLimiter, apiRouter);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

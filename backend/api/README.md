@@ -24,13 +24,15 @@ The server starts on `http://localhost:3000` by default.
 
 ```
 src/
-├── index.ts               # HTTP server, Socket.io, graceful shutdown
+├── index.ts               # HTTP server, Socket.io init, graceful shutdown
 ├── app.ts                 # Express app with middleware chain
 ├── config/index.ts        # Typed env config
 ├── lib/
 │   ├── db.ts              # PostgreSQL pool + query helpers
 │   ├── redis.ts           # Redis client
 │   ├── s3.ts              # Presigned URLs, CDN URL builder
+│   ├── socket.ts          # Socket.io server, Redis adapter, geo-rooms
+│   ├── broadcast.ts       # Fire-and-forget WebSocket broadcast helpers
 │   ├── errors.ts          # HttpError class
 │   └── logger.ts          # Pino structured logging
 ├── middleware/
@@ -380,6 +382,47 @@ Poll the processing status of all media for a report. Checks S3 buckets to deter
 ```
 
 **Status values:** `pending` | `uploading` | `processing` | `active` | `failed` | `removed`
+
+---
+
+## WebSocket (Socket.io)
+
+Real-time updates are delivered over Socket.io on the same HTTP server. No separate WebSocket endpoint is needed.
+
+### Connection
+
+```javascript
+const socket = io('https://api.example.com', {
+  auth: { deviceId: 'your-device-id' }
+});
+```
+
+Authentication requires a valid `deviceId` (1-64 chars) in `socket.handshake.auth`.
+
+### Client → Server Events
+
+| Event | Payload | Description |
+|-------|---------|-------------|
+| `subscribe:location` | `{ lat: number, lng: number }` | Join a geo-grid room to receive nearby report updates |
+| `unsubscribe:location` | -- | Leave the current location room |
+| `subscribe:report` | `reportId: string` | Watch a specific report for comments/upvotes |
+| `unsubscribe:report` | `reportId: string` | Stop watching a report |
+
+### Server → Client Events
+
+| Event | Payload | When |
+|-------|---------|------|
+| `report:new` | `{ id, type, lat, lng, description, upvotes, comment_count, created_at }` | A nearby report's media is fully processed and the report becomes `active` |
+| `comment:new` | `{ id, report_id, content, created_at }` | A new comment is added to a watched report |
+| `report:upvote` | `{ report_id, upvoted }` | An upvote is toggled on a watched report |
+
+### Geo-Grid Rooms
+
+Locations are mapped to a 0.1-degree (~11 km) grid. When a report becomes active, `report:new` is emitted to the report's grid cell and all 8 neighboring cells (3x3 overlap), ensuring users near grid boundaries receive the update.
+
+### Scaling
+
+The `@socket.io/redis-adapter` uses Redis Pub/Sub to synchronize broadcasts across all ECS Fargate tasks, so any server instance can emit to clients connected to any other instance.
 
 ---
 

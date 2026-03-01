@@ -1,12 +1,14 @@
 import { randomUUID } from 'crypto';
 import { Router, Request, Response } from 'express';
 import { validate } from '../middleware/validate';
+import { writeLimiter } from '../middleware/rate-limit';
 import { createReportSchema, nearbyQuerySchema, upvoteSchema } from '../validators/report';
 import { createCommentSchema, commentListQuerySchema } from '../validators/comment';
 import { uploadRequestSchema, uploadCompleteSchema } from '../validators/media';
 import { HttpError } from '../lib/errors';
 import { config } from '../config';
 import * as s3 from '../lib/s3';
+import * as broadcast from '../lib/broadcast';
 import * as reportModel from '../models/report';
 import * as mediaModel from '../models/media';
 import * as commentModel from '../models/comment';
@@ -19,7 +21,7 @@ const MAX_MEDIA_PER_REPORT = 5;
 
 const router = Router();
 
-router.post('/', validate(createReportSchema), async (req: Request, res: Response) => {
+router.post('/', writeLimiter, validate(createReportSchema), async (req: Request, res: Response) => {
   const { device_id, type, description, lat, lng, address } = req.body;
 
   const device = await deviceActivity.getOrCreate(device_id);
@@ -64,7 +66,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   res.json({ ...report, media });
 });
 
-router.post('/:id/upvote', validate(upvoteSchema), async (req: Request, res: Response) => {
+router.post('/:id/upvote', writeLimiter, validate(upvoteSchema), async (req: Request, res: Response) => {
   const { id } = req.params;
   const { device_id } = req.body;
 
@@ -74,6 +76,8 @@ router.post('/:id/upvote', validate(upvoteSchema), async (req: Request, res: Res
   }
 
   const upvoted = await upvoteModel.toggle(id, device_id);
+
+  broadcast.broadcastUpvote(id, upvoted);
 
   res.json({ upvoted });
 });
@@ -102,6 +106,7 @@ router.get(
 
 router.post(
   '/:id/comments',
+  writeLimiter,
   validate(createCommentSchema),
   async (req: Request, res: Response) => {
     const { id } = req.params;
@@ -128,6 +133,8 @@ router.post(
 
     const comment = await commentModel.createForReport({ report_id: id, device_id, content });
 
+    broadcast.broadcastNewComment(comment);
+
     res.status(201).json(comment);
   },
 );
@@ -149,6 +156,7 @@ const UPLOAD_ALLOWED_STATUSES = new Set(['pending', 'uploading', 'failed']);
 
 router.post(
   '/:id/upload',
+  writeLimiter,
   validate(uploadRequestSchema),
   async (req: Request, res: Response) => {
     const { id } = req.params;
@@ -202,6 +210,7 @@ router.post(
 
 router.post(
   '/:id/upload/complete',
+  writeLimiter,
   validate(uploadCompleteSchema),
   async (req: Request, res: Response) => {
     const { id } = req.params;
@@ -286,7 +295,10 @@ router.get('/:id/media/status', async (req: Request, res: Response) => {
   const anyFailed = results.some((m) => m.status === 'failed');
 
   if (allActive && report.status !== 'active') {
-    await reportModel.updateStatus(id, 'active');
+    const updatedReport = await reportModel.updateStatus(id, 'active');
+    if (updatedReport) {
+      broadcast.broadcastNewReport(updatedReport);
+    }
   } else if (anyFailed && report.status === 'processing') {
     await reportModel.updateStatus(id, 'failed');
   }

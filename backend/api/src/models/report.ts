@@ -29,7 +29,7 @@ export async function findNearby(
             ST_Distance(location, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography) AS distance_m
      FROM reports
      WHERE ST_DWithin(location, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography, $3)
-       AND status != 'removed'
+       AND status = 'active'
      ORDER BY created_at DESC
      LIMIT $4 OFFSET $5`,
     [lat, lng, radiusMeters, pagination.limit, pagination.offset],

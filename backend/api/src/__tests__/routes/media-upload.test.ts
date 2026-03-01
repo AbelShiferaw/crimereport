@@ -11,6 +11,8 @@ jest.mock('../../models/device-activity');
 jest.mock('../../lib/s3');
 jest.mock('../../lib/db');
 jest.mock('../../lib/redis');
+jest.mock('../../lib/broadcast');
+jest.mock('../../lib/socket');
 
 const mockReport = reportModel as jest.Mocked<typeof reportModel>;
 const mockMedia = mediaModel as jest.Mocked<typeof mediaModel>;

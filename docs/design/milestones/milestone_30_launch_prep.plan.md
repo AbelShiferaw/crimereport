@@ -76,12 +76,38 @@ The monitoring stack (`lib/monitoring/monitoring-stack.ts`) already provides:
 **Additional monitoring to add for launch:**
 
 - Add an SNS topic for alarm notifications (email + PagerDuty/Slack webhook).
-- Add custom CloudWatch metrics from the API (via Pino structured logs + metric filters):
-  - `ReportsCreated` — count of new reports per minute
-  - `UploadsCompleted` — count of media uploads completing the pipeline
-  - `WebSocketConnections` — gauge of active Socket.io connections
+- **Custom application-level CloudWatch metrics** using **EMF (Embedded Metric Format)** via the `aws-embedded-metrics` library. EMF writes specially formatted JSON to stdout; the CloudWatch agent built into Fargate automatically parses it into real CloudWatch metrics -- no extra SDK calls, no network overhead, no extra infrastructure.
+
+  **Planned custom metrics:**
+
+  | Metric | Type | Description |
+  |--------|------|-------------|
+  | `ReportsCreated` | Counter | New reports per minute, dimensioned by `CrimeType` |
+  | `MediaUploadsCompleted` | Counter | Media files completing the processing pipeline |
+  | `MediaFailureRate` | Counter | Media uploads ending in `failed` status |
+  | `MediaProcessingLatency` | Timer | Time from upload to `active` status (ms) |
+  | `WebSocketConnections` | Gauge | Active Socket.io connections |
+  | `BroadcastFanOut` | Counter | Rooms/clients reached per `report:new` broadcast |
+  | `RateLimitHits` | Counter | Requests blocked by express-rate-limit (abuse signal) |
+  | `GeoGridActivity` | Counter | Reports per grid cell (for heat map / hot-spot analysis) |
+
+  **Example usage** (to be added in route handlers):
+
+  ```typescript
+  import { createMetricsLogger, Unit } from 'aws-embedded-metrics';
+
+  const metrics = createMetricsLogger();
+  metrics.setNamespace('CrimeReport');
+  metrics.putDimensions({ CrimeType: report.type });
+  metrics.putMetric('ReportsCreated', 1, Unit.Count);
+  await metrics.flush();
+  ```
+
+  EMF is preferred over the CloudWatch SDK (`PutMetricData`) because it adds zero latency to HTTP requests and over CloudWatch Logs metric filters because it supports dimensions, units, and high-resolution metrics natively.
+
 - Add a dashboard row for these custom application-level metrics.
 - Configure CloudWatch Log Insights saved queries for common debugging patterns.
+- Create alarms on key custom metrics (e.g., `MediaFailureRate` exceeding a threshold).
 
 ```typescript
 import * as sns from 'aws-cdk-lib/aws-sns';

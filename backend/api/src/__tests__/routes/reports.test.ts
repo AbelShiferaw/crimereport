@@ -4,6 +4,7 @@ import * as upvoteModel from '../../models/report-upvote';
 import * as deviceActivity from '../../models/device-activity';
 import * as dbHealth from '../../lib/db';
 import * as redisHealth from '../../lib/redis';
+import * as broadcastMod from '../../lib/broadcast';
 
 jest.mock('../../models/report');
 jest.mock('../../models/media');
@@ -11,6 +12,8 @@ jest.mock('../../models/report-upvote');
 jest.mock('../../models/device-activity');
 jest.mock('../../lib/db');
 jest.mock('../../lib/redis');
+jest.mock('../../lib/broadcast');
+jest.mock('../../lib/socket');
 
 const mockReport = reportModel as jest.Mocked<typeof reportModel>;
 const mockMedia = mediaModel as jest.Mocked<typeof mediaModel>;

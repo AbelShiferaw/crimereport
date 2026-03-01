@@ -13,6 +13,8 @@ jest.mock('../../models/media');
 jest.mock('../../models/report-upvote');
 jest.mock('../../lib/db');
 jest.mock('../../lib/redis');
+jest.mock('../../lib/broadcast');
+jest.mock('../../lib/socket');
 
 const mockReport = reportModel as jest.Mocked<typeof reportModel>;
 const mockComment = commentModel as jest.Mocked<typeof commentModel>;

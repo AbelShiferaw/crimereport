@@ -32,6 +32,7 @@ A comprehensive walkthrough of the backend API: how it's built, how every layer 
 24. [Docker & Deployment](#docker--deployment)
 25. [Testing](#testing)
 26. [Request Lifecycle (End-to-End)](#request-lifecycle-end-to-end)
+27. [Real-Time Layer (WebSocket / Socket.io)](#real-time-layer-websocket--socketio)
 
 ---
 
@@ -1258,3 +1259,62 @@ If any step throws an error:
 → Logs the error with Pino
 → Returns { error: "..." } with appropriate status code
 ```
+
+---
+
+## Real-Time Layer (WebSocket / Socket.io)
+
+The API provides real-time updates to connected clients via Socket.io, running on the same HTTP server as the REST API.
+
+### Architecture
+
+```
+src/lib/
+├── socket.ts      # Socket.io server, Redis adapter, auth, room management
+└── broadcast.ts   # Fire-and-forget broadcast helpers called from route handlers
+```
+
+Socket.io is initialised in `index.ts` with `await initSocket(httpServer)` before the server starts listening. This wraps the existing Node.js HTTP server with the Socket.io transport layer.
+
+### How It Works
+
+1. **Connection**: A client connects via WebSocket with `auth: { deviceId }`. The auth middleware validates the device ID (1-64 chars) and rejects invalid connections.
+
+2. **Room Subscription**: Clients emit `subscribe:location` with `{ lat, lng }` to join a geo-grid room. The `locationRoom()` function maps coordinates to a 0.1-degree grid cell string like `location:40.7:-74.1`.
+
+3. **Broadcasts**: When a mutation occurs (report activated, comment created, upvote toggled), the route handler calls a `broadcast.*` function. These are fire-and-forget — wrapped in try/catch so they never block the HTTP response.
+
+4. **Geo-Grid Fan-Out**: For `report:new`, `overlappingRooms()` calculates the 3x3 grid of neighboring cells around the report's location and emits to all of them, ensuring users near grid boundaries receive the update.
+
+5. **Redis Adapter**: In production, `@socket.io/redis-adapter` uses Redis Pub/Sub to synchronize broadcasts across all ECS Fargate tasks. Any server can emit to clients connected to any other server. Falls back to in-memory for local development.
+
+### Key Implementation Details
+
+**`lib/socket.ts`** exports:
+- `initSocket(httpServer)` — Creates Socket.io server, connects Redis adapter, registers auth middleware and event handlers
+- `getIO()` — Returns the Socket.io instance (throws if not initialised)
+- `locationRoom(lat, lng)` — Maps coordinates to grid cell string
+- `overlappingRooms(lat, lng)` — Returns 3x3 grid of room strings around a point
+- `shutdownSocket()` — Gracefully closes all connections
+
+**`lib/broadcast.ts`** exports:
+- `broadcastNewReport(report)` — Emits `report:new` to all overlapping geo-rooms
+- `broadcastNewComment(comment)` — Emits `comment:new` to report-specific room (excludes `device_id` from payload)
+- `broadcastUpvote(reportId, upvoted)` — Emits `report:upvote` to report-specific room
+
+### Broadcast Timing
+
+| Event | Trigger | Timing |
+|-------|---------|--------|
+| `report:new` | `GET /reports/:id/media/status` | Only when all media transitions to `active` and report was not already `active` |
+| `comment:new` | `POST /reports/:id/comments` | Immediately after comment creation |
+| `report:upvote` | `POST /reports/:id/upvote` | Immediately after upvote toggle |
+
+The `report:new` broadcast is deliberately delayed until media processing completes. This ensures reports without approved media never appear on other users' feeds. The double-broadcast race condition is prevented by checking `report.status !== 'active'` before broadcasting — once the status is set to `active`, subsequent poll requests skip the broadcast.
+
+### Active-Only Feed
+
+To maintain consistency between REST and WebSocket:
+- `findNearby()` query filters by `status = 'active'` (not just `status != 'removed'`)
+- Reports only become `active` after all media is processed
+- Text-only reports (no media) never reach `active` status and are never broadcast
