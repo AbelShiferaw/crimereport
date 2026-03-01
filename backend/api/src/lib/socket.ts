@@ -68,18 +68,20 @@ async function connectRedisAdapter(socketServer: SocketServer): Promise<void> {
   }
 }
 
-export async function initSocket(httpServer: import('http').Server): Promise<SocketServer> {
+export function initSocket(httpServer: import('http').Server): SocketServer {
   io = new SocketServer(httpServer, {
     cors: { origin: config.corsOrigin, methods: ['GET', 'POST'] },
     pingTimeout: 60_000,
     pingInterval: 25_000,
   });
 
-  await connectRedisAdapter(io);
-
   io.use(authMiddleware);
   io.use(connectionLimitMiddleware);
   io.on('connection', handleConnection);
+
+  connectRedisAdapter(io).catch((err) =>
+    logger.error({ err }, 'unexpected error in connectRedisAdapter'),
+  );
 
   return io;
 }
