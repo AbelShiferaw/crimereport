@@ -28,7 +28,7 @@ async function connectRedisAdapter(socketServer: SocketServer): Promise<void> {
   for (let attempt = 1; attempt <= REDIS_RETRY_ATTEMPTS; attempt++) {
     try {
       const pubClient = createClient({
-        socket: { host: config.redis.host, port: config.redis.port },
+        socket: { host: config.redis.host, port: config.redis.port, tls: config.isProd },
       });
       const subClient = pubClient.duplicate();
 

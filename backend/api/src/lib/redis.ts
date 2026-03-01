@@ -11,6 +11,7 @@ export async function getClient(): Promise<RedisClientType> {
     socket: {
       host: config.redis.host,
       port: config.redis.port,
+      tls: config.isProd,
       reconnectStrategy: (retries) => Math.min(retries * 100, 5_000),
     },
   });
