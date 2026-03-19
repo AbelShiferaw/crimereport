@@ -11,6 +11,7 @@ import { CacheStack } from '../lib/data/cache-stack';
 import { MediaStack } from '../lib/media/media-stack';
 import { ComputeStack } from '../lib/compute/compute-stack';
 import { MonitoringStack } from '../lib/monitoring/monitoring-stack';
+import { SnsStack } from '../lib/notifications/sns-stack';
 import { DEFAULT_TAGS, PROJECT_PREFIX } from '../lib/config/constants';
 
 const app = new cdk.App();
@@ -69,6 +70,11 @@ const mediaStack = new MediaStack(app, 'CrimeReport-Media', {
   description: 'CrimeReport - S3 storage, CloudFront CDN, Step Functions media pipeline',
 });
 
+const snsStack = new SnsStack(app, 'CrimeReport-Sns', {
+  env,
+  description: 'CrimeReport - SNS platform applications for push notifications',
+});
+
 const computeStack = new ComputeStack(app, 'CrimeReport-Compute', {
   env,
   description: 'CrimeReport - ECS Fargate API service with ALB and auto-scaling',
@@ -84,6 +90,8 @@ const computeStack = new ComputeStack(app, 'CrimeReport-Compute', {
   s3UploadsBucket: mediaStack.uploadsBucket.bucketName,
   s3MediaBucket: mediaStack.mediaBucket.bucketName,
   cdnDomain: mediaStack.distribution.distributionDomainName,
+  snsAndroidPlatformArn: snsStack.androidPlatformArn,
+  snsIosPlatformArn: snsStack.iosPlatformArn,
 });
 computeStack.addDependency(networkStack);
 computeStack.addDependency(securityStack);
@@ -92,6 +100,7 @@ computeStack.addDependency(databaseStack);
 computeStack.addDependency(cacheStack);
 computeStack.addDependency(wafStack);
 computeStack.addDependency(mediaStack);
+computeStack.addDependency(snsStack);
 
 const monitoringStack = new MonitoringStack(app, 'CrimeReport-Monitoring', {
   env,

@@ -39,6 +39,8 @@ describe('ComputeStack', () => {
       s3UploadsBucket: 'crimereport-uploads-123456789012',
       s3MediaBucket: 'crimereport-media-123456789012',
       cdnDomain: 'd111111abcdef8.cloudfront.net',
+      snsAndroidPlatformArn: 'arn:aws:sns:us-east-1:123456789012:app/GCM/crimereport-android',
+      snsIosPlatformArn: 'arn:aws:sns:us-east-1:123456789012:app/APNS/crimereport-ios',
     });
 
     template = Template.fromStack(stack);

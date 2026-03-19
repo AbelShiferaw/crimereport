@@ -36,6 +36,8 @@ export interface ComputeStackProps extends cdk.StackProps {
   s3UploadsBucket: string;
   s3MediaBucket: string;
   cdnDomain: string;
+  snsAndroidPlatformArn: string;
+  snsIosPlatformArn: string;
 }
 
 export class ComputeStack extends cdk.Stack {
@@ -62,6 +64,8 @@ export class ComputeStack extends cdk.Stack {
       s3UploadsBucket,
       s3MediaBucket,
       cdnDomain,
+      snsAndroidPlatformArn,
+      snsIosPlatformArn,
     } = props;
 
     // ── ECR Repository ──────────────────────────────────────
@@ -142,6 +146,8 @@ export class ComputeStack extends cdk.Stack {
         S3_UPLOADS_BUCKET: s3UploadsBucket,
         S3_MEDIA_BUCKET: s3MediaBucket,
         CDN_DOMAIN: cdnDomain,
+        SNS_ANDROID_PLATFORM_ARN: snsAndroidPlatformArn,
+        SNS_IOS_PLATFORM_ARN: snsIosPlatformArn,
       },
       secrets: {
         DATABASE_URL: ecs.Secret.fromSecretsManager(dbSecret),

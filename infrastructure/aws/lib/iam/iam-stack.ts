@@ -36,10 +36,24 @@ export class IamStack extends cdk.Stack {
 
     this.ecsTaskRole.addToPolicy(
       new iam.PolicyStatement({
-        sid: 'SNSPublish',
+        sid: 'SNSPushNotifications',
         effect: iam.Effect.ALLOW,
-        actions: ['sns:Publish'],
-        resources: [`arn:aws:sns:${this.region}:${this.account}:${PROJECT_PREFIX}-*`],
+        actions: [
+          'sns:Publish',
+          'sns:CreatePlatformEndpoint',
+          'sns:DeleteEndpoint',
+          'sns:GetEndpointAttributes',
+          'sns:SetEndpointAttributes',
+        ],
+        resources: [
+          `arn:aws:sns:${this.region}:${this.account}:${PROJECT_PREFIX}-*`,
+          `arn:aws:sns:${this.region}:${this.account}:app/GCM/${PROJECT_PREFIX}-*`,
+          `arn:aws:sns:${this.region}:${this.account}:app/APNS/${PROJECT_PREFIX}-*`,
+          `arn:aws:sns:${this.region}:${this.account}:app/APNS_SANDBOX/${PROJECT_PREFIX}-*`,
+          `arn:aws:sns:${this.region}:${this.account}:endpoint/GCM/${PROJECT_PREFIX}-*/*`,
+          `arn:aws:sns:${this.region}:${this.account}:endpoint/APNS/${PROJECT_PREFIX}-*/*`,
+          `arn:aws:sns:${this.region}:${this.account}:endpoint/APNS_SANDBOX/${PROJECT_PREFIX}-*/*`,
+        ],
       }),
     );
 
