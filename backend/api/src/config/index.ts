@@ -39,6 +39,8 @@ export const config = {
     s3UploadsBucket: env('S3_UPLOADS_BUCKET', ''),
     s3MediaBucket: env('S3_MEDIA_BUCKET', ''),
     cdnDomain: env('CDN_DOMAIN', ''),
+    snsAndroidArn: env('SNS_ANDROID_PLATFORM_ARN', ''),
+    snsIosArn: env('SNS_IOS_PLATFORM_ARN', ''),
   },
 
   get isDev() {

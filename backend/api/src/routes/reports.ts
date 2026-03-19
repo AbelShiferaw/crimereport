@@ -14,6 +14,9 @@ import * as mediaModel from '../models/media';
 import * as commentModel from '../models/comment';
 import * as upvoteModel from '../models/report-upvote';
 import * as deviceActivity from '../models/device-activity';
+import * as pushModel from '../models/push-subscription';
+import * as sns from '../lib/sns';
+import { logger } from '../lib/logger';
 
 const MAX_DAILY_REPORTS = 10;
 const MAX_DAILY_COMMENTS = 50;
@@ -298,6 +301,9 @@ router.get('/:id/media/status', async (req: Request, res: Response) => {
     const updatedReport = await reportModel.updateStatus(id, 'active');
     if (updatedReport) {
       broadcast.broadcastNewReport(updatedReport);
+      sendNearbyNotifications(updatedReport).catch((err) =>
+        logger.error({ err, reportId: updatedReport.id }, 'push notification batch failed'),
+      );
     }
   } else if (anyFailed && report.status === 'processing') {
     await reportModel.updateStatus(id, 'failed');
@@ -307,5 +313,51 @@ router.get('/:id/media/status', async (req: Request, res: Response) => {
 
   res.json({ status: currentStatus, media: results });
 });
+
+async function sendNearbyNotifications(report: {
+  id: string;
+  device_id: string;
+  type: string;
+  description: string | null;
+  lat: number;
+  lng: number;
+}) {
+  const devices = await pushModel.findNearbyEnabled(
+    report.lat,
+    report.lng,
+    report.type,
+    report.device_id,
+  );
+
+  if (devices.length === 0) return;
+  logger.info({ reportId: report.id, deviceCount: devices.length }, 'sending push notifications');
+
+  const typeLabel =
+    report.type.charAt(0).toUpperCase() + report.type.slice(1).replace('_', ' ');
+  const notification = {
+    title: `${typeLabel} Reported Nearby`,
+    body: report.description?.substring(0, 100) || 'A new crime was reported in your area',
+    data: {
+      report_id: report.id,
+      type: report.type,
+      lat: String(report.lat),
+      lng: String(report.lng),
+    },
+  };
+
+  const results = await Promise.allSettled(
+    devices.map(async (device) => {
+      const ok = await sns.sendToDevice(device.endpoint_arn!, device.platform, notification);
+      if (!ok && device.endpoint_arn) {
+        await pushModel.disableByEndpointArn(device.endpoint_arn);
+      }
+    }),
+  );
+
+  const failed = results.filter((r) => r.status === 'rejected').length;
+  if (failed > 0) {
+    logger.warn({ reportId: report.id, failed, total: devices.length }, 'some push sends failed');
+  }
+}
 
 export default router;

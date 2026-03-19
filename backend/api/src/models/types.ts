@@ -107,3 +107,31 @@ export interface PaginationOptions {
   limit: number;
   offset: number;
 }
+
+export interface PushSubscription {
+  device_id: string;
+  fcm_token: string;
+  platform: 'ios' | 'android';
+  endpoint_arn: string | null;
+  lat: number;
+  lng: number;
+  radius: number;
+  types: string[] | null;
+  enabled: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface CreatePushSubscriptionInput {
+  device_id: string;
+  fcm_token: string;
+  platform: 'ios' | 'android';
+  lat: number;
+  lng: number;
+}
+
+export interface UpdatePushPreferencesInput {
+  enabled?: boolean;
+  radius?: number;
+  types?: string[];
+}
