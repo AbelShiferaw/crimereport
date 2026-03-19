@@ -451,6 +451,7 @@ The backend sends push notifications via FCM with this payload shape:
 - **Background message handler** must be a top-level function (Dart isolate requirement). It only needs to call `Firebase.initializeApp()` — the system tray handles display.
 - **Deep linking** — the exact routing mechanism depends on whether we add named routes or a router package later. The initial implementation uses `GlobalKey<NavigatorState>` which is straightforward.
 - **Android notification channel** — Firebase Messaging auto-creates a default channel. A custom high-importance channel can be added later for finer control.
+- **Automatic location re-registration** — The app should silently re-register with the backend when the user moves to a new area so the `push_subscriptions` table stays current. Use the platform's "significant location change" API (iOS: `CLLocationManager.startMonitoringSignificantLocationChanges`, Android: `FusedLocationProviderClient` with `PRIORITY_BALANCED_POWER_ACCURACY`) which fires only when the user moves ~500m+. This balances accuracy with battery life. On each significant location change, call `POST /api/v1/notifications/register` with the updated lat/lng — the backend's `upsert` query handles updating the existing row. Avoid high-frequency GPS polling (battery drain) or only-on-app-open registration (stale location data).
 
 ## Files
 
