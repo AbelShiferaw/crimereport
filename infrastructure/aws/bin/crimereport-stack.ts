@@ -12,6 +12,7 @@ import { MediaStack } from '../lib/media/media-stack';
 import { ComputeStack } from '../lib/compute/compute-stack';
 import { MonitoringStack } from '../lib/monitoring/monitoring-stack';
 import { SnsStack } from '../lib/notifications/sns-stack';
+import { CicdStack } from '../lib/cicd/cicd-stack';
 import { DEFAULT_TAGS, PROJECT_PREFIX } from '../lib/config/constants';
 
 const app = new cdk.App();
@@ -101,6 +102,11 @@ computeStack.addDependency(cacheStack);
 computeStack.addDependency(wafStack);
 computeStack.addDependency(mediaStack);
 computeStack.addDependency(snsStack);
+
+new CicdStack(app, 'CrimeReport-Cicd', {
+  env,
+  description: 'CrimeReport - GitHub Actions OIDC provider and deploy role',
+});
 
 const monitoringStack = new MonitoringStack(app, 'CrimeReport-Monitoring', {
   env,
