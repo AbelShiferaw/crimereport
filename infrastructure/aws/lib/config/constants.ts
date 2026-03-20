@@ -30,7 +30,7 @@ export const LOG_RETENTION_DAYS = 30;
 export const MODERATION_CONFIDENCE_THRESHOLD = 80;
 export const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
 
-export const GITHUB_REPO = 'abelshiferaw/crimereport';
+export const GITHUB_REPO = 'AbelShiferaw/crimereport';
 
 export const DEFAULT_TAGS: Record<string, string> = {
   Project: 'CrimeReport',
