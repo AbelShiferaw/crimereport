@@ -1,4 +1,4 @@
-[![Deploy](https://github.com/abelshiferaw/crimereport/actions/workflows/deploy.yml/badge.svg)](https://github.com/abelshiferaw/crimereport/actions/workflows/deploy.yml)
+[![Deploy](https://github.com/AbelShiferaw/crimereport/actions/workflows/deploy.yml/badge.svg)](https://github.com/AbelShiferaw/crimereport/actions/workflows/deploy.yml)
 
 # CrImEreport
 

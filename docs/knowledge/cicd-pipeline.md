@@ -87,7 +87,7 @@ GitHub's OIDC Server  ──trusts──►  AWS IAM OIDC Provider  ──allows
                                                                            │
                                    Only if:                                │
                                    - issuer = token.actions.github...      │
-                                   - repo = abelshiferaw/crimereport       │
+                                   - repo = AbelShiferaw/crimereport       │
                                    - branch = main (for deploy)            │
                                                                            ▼
                                                               Temporary STS Credentials
@@ -116,7 +116,7 @@ const deployRole = new iam.Role(this, 'GithubDeployRole', {
       },
       StringLike: {
         'token.actions.githubusercontent.com:sub':
-          'repo:abelshiferaw/crimereport:*',
+          `repo:${GITHUB_REPO}:*`,
       },
     },
     'sts:AssumeRoleWithWebIdentity',
@@ -161,7 +161,7 @@ jobs:
 | Check | Status | Details |
 |-|-|-|
 | Backend Tests | Passed (136 tests) | Jest unit tests for models, routes, libs |
-| CDK Tests | Passed (89 tests) | Infrastructure snapshot + assertion tests |
+| CDK Tests | Passed (93 tests) | Infrastructure snapshot + assertion tests |
 | Flutter Checks | Passed | `flutter analyze` (lint) + `flutter test` (10 tests) |
 | CDK Diff | Passed | Comment posted with infrastructure changes preview |
 
@@ -189,7 +189,11 @@ jobs:
       - configure AWS credentials (OIDC)
       - npm ci && npm run build (in infrastructure/aws/)
       - cdk deploy --all --require-approval never
-      - health check (curl ALB /health/ready)
+  integration-tests:
+    needs: [deploy]       # runs after deploy succeeds
+    steps:
+      - retrieve ALB DNS from CloudFormation outputs
+      - npm run test:integration (17 tests against live API)
 ```
 
 ---
@@ -376,7 +380,7 @@ These are not part of Milestone 24.5 but are natural next steps:
 |-|-|
 | Bootstrap OIDC (one-time) | `cd infrastructure/aws && npx cdk deploy CrimeReport-Cicd` |
 | Manually trigger deploy | Push to `main` or use GitHub Actions "Re-run" button |
-| View workflow runs | `https://github.com/abelshiferaw/crimereport/actions` |
+| View workflow runs | `https://github.com/AbelShiferaw/crimereport/actions` |
 | View deploy logs | Click into any workflow run on GitHub |
 | Check current deploy | `curl https://<ALB-DNS>/health/ready` |
 

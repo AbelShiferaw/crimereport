@@ -15,7 +15,7 @@ Requires **Milestones 14-24** complete (all infrastructure and backend features 
 - **File:** `infrastructure/aws/lib/cicd/cicd-stack.ts`
 - Creates an IAM OIDC Provider that trusts `token.actions.githubusercontent.com`
 - Creates a deploy role (`crimereport-github-deploy`) with `AdministratorAccess`
-- The role can only be assumed by the `abelshiferaw/crimereport` GitHub repo
+- The role can only be assumed by the `AbelShiferaw/crimereport` GitHub repo
 - No long-lived AWS keys stored in GitHub -- credentials are temporary (15 min)
 - **Test:** `infrastructure/aws/test/cicd/cicd-stack.test.ts` (4 assertions)
 
@@ -61,6 +61,8 @@ Concurrency group `deploy-production` prevents parallel deploys.
 | `backend/api/src/__tests__/integration/production.test.ts` | Created |
 | `backend/api/jest.integration.config.ts` | Created |
 | `backend/api/package.json` | Modified (added test:integration, excluded integration from default test) |
+| `apps/mobile/pubspec.yaml` | Modified (added firebase_core dependency) |
+| `apps/mobile/assets/markers/.gitkeep` | Created (placeholder for CI) |
 | `docs/knowledge/cicd-pipeline.md` | Created (knowledge base) |
 | `docs/knowledge/diagrams/cicd_pipeline.py` | Created (3 architecture diagrams) |
 
