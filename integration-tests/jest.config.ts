@@ -4,7 +4,7 @@ const config: Config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
-  testMatch: ['**/__tests__/integration/**/*.test.ts'],
+  testMatch: ['**/*.test.ts'],
   testTimeout: 30000,
   clearMocks: true,
 };

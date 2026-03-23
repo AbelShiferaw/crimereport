@@ -193,7 +193,7 @@ jobs:
     needs: [deploy]       # runs after deploy succeeds
     steps:
       - retrieve ALB DNS from CloudFormation outputs
-      - npm run test:integration (17 tests against live API)
+      - npm test in integration-tests/ (17 tests against live API)
 ```
 
 ---
