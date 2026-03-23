@@ -17,6 +17,7 @@ crimereport/
 ├── backend/
 │   ├── api/                 # Node.js REST API (TypeScript, Express, Socket.io)
 │   └── functions/           # AWS Lambda functions (transcode trigger)
+├── integration-tests/       # Integration tests for deployed API (Supertest)
 ├── infrastructure/
 │   └── aws/                 # AWS CDK stacks (VPC, Aurora, S3, ECS, etc.)
 ├── docs/

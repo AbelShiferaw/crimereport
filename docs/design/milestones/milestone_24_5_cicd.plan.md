@@ -35,9 +35,11 @@ Triggers on push to `main` (i.e., PR merge). Three sequential jobs:
 Concurrency group `deploy-production` prevents parallel deploys.
 
 ### 4. Integration Test Suite
-- **File:** `backend/api/src/__tests__/integration/production.test.ts`
-- **Config:** `backend/api/jest.integration.config.ts` (30s timeout, separate from unit tests)
-- **Script:** `npm run test:integration` (uses `API_URL` environment variable)
+- **Package:** `integration-tests/` (standalone top-level package)
+- **File:** `integration-tests/src/production.test.ts`
+- **Config:** `integration-tests/jest.config.ts` (30s timeout, ts-jest preset)
+- **Script:** `npm test` (uses `API_URL` environment variable)
+- All requests include a `User-Agent` header to pass WAF rules
 - Tests all 17 API endpoints against the real deployed infrastructure:
   - Health checks (liveness + readiness)
   - Reports CRUD (create, get, list nearby, 404 handling)
@@ -58,9 +60,10 @@ Concurrency group `deploy-production` prevents parallel deploys.
 | `infrastructure/aws/lib/config/constants.ts` | Modified (added GITHUB_REPO) |
 | `.github/workflows/pr.yml` | Created |
 | `.github/workflows/deploy.yml` | Created |
-| `backend/api/src/__tests__/integration/production.test.ts` | Created |
-| `backend/api/jest.integration.config.ts` | Created |
-| `backend/api/package.json` | Modified (added test:integration, excluded integration from default test) |
+| `integration-tests/package.json` | Created (standalone integration test package) |
+| `integration-tests/tsconfig.json` | Created |
+| `integration-tests/jest.config.ts` | Created |
+| `integration-tests/src/production.test.ts` | Created (with User-Agent header for WAF) |
 | `apps/mobile/pubspec.yaml` | Modified (added firebase_core dependency) |
 | `apps/mobile/assets/markers/.gitkeep` | Created (placeholder for CI) |
 | `docs/knowledge/cicd-pipeline.md` | Created (knowledge base) |
@@ -75,7 +78,7 @@ Concurrency group `deploy-production` prevents parallel deploys.
 ## Key Design Decisions
 - **OIDC over stored keys** -- No long-lived AWS credentials; temp creds auto-expire
 - **AdministratorAccess** -- Simplest for solo project; scope down for team use
-- **Separate Jest config for integration tests** -- `npm test` only runs unit tests; `npm run test:integration` runs against live API
+- **Separate integration-tests package** -- Integration tests live in their own top-level `integration-tests/` package, fully isolated from backend unit tests
 - **CDK diff as PR comment** -- Reviewers see infrastructure changes alongside code changes
 - **Concurrency group** -- Prevents conflicting CloudFormation updates from parallel merges
 
