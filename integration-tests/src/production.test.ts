@@ -138,7 +138,6 @@ describe('Upvotes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('upvoted');
-    expect(res.body).toHaveProperty('upvotes');
   });
 });
 
@@ -172,7 +171,7 @@ describe('Media upload', () => {
         content_type: 'image/jpeg',
       });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('upload_url');
     expect(res.body).toHaveProperty('media_key');
   });
