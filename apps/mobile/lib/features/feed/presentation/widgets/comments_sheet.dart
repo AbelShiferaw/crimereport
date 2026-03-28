@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/feed/data/repositories/comment_repository.dart';
 import 'package:crimereport/features/feed/providers/feed_providers.dart';
 import 'package:crimereport/features/feed/presentation/widgets/comment_tile.dart';
 
@@ -18,12 +19,35 @@ class CommentsSheet extends ConsumerStatefulWidget {
 class _CommentsSheetState extends ConsumerState<CommentsSheet> {
   final _inputController = TextEditingController();
   final _inputFocus = FocusNode();
+  bool _isSending = false;
 
   @override
   void dispose() {
     _inputController.dispose();
     _inputFocus.dispose();
     super.dispose();
+  }
+
+  Future<void> _submitComment() async {
+    final text = _inputController.text.trim();
+    if (text.isEmpty || _isSending) return;
+
+    setState(() => _isSending = true);
+    try {
+      final repo = ref.read(commentRepositoryProvider);
+      await repo.createComment(widget.reportId, text);
+      _inputController.clear();
+      _inputFocus.unfocus();
+      ref.invalidate(commentsProvider(widget.reportId));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to post comment')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSending = false);
+    }
   }
 
   @override
@@ -233,25 +257,29 @@ class _CommentsSheetState extends ConsumerState<CommentsSheet> {
             ),
             const SizedBox(width: AppSpacing.sm),
             GestureDetector(
-              onTap: () {
-                // Non-functional for now — backend integration in Phase D
-                if (_inputController.text.trim().isNotEmpty) {
-                  _inputController.clear();
-                  _inputFocus.unfocus();
-                }
-              },
+              onTap: _isSending ? null : _submitComment,
               child: Container(
                 width: 40,
                 height: 40,
-                decoration: const BoxDecoration(
-                  color: AppColors.primary,
+                decoration: BoxDecoration(
+                  color: _isSending
+                      ? AppColors.primary.withAlpha(128)
+                      : AppColors.primary,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.arrow_upward_rounded,
-                  color: Colors.white,
-                  size: 20,
-                ),
+                child: _isSending
+                    ? const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.arrow_upward_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
               ),
             ),
           ],

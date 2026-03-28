@@ -8,7 +8,6 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/theme/theme.dart';
-import 'package:crimereport/shared/data/mock_data_service.dart';
 import 'package:crimereport/shared/widgets/loading_placeholder.dart';
 import 'package:crimereport/shared/widgets/permission_placeholder.dart';
 import 'package:crimereport/features/feed/data/models/report.dart';
@@ -37,13 +36,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   List<Report> _reports = [];
   bool _markersAdded = false;
+  bool _imagesRegistered = false;
 
   @override
   void initState() {
     super.initState();
     _initMapbox();
     _initLocation();
-    _reports = ref.read(mapReportsProvider);
   }
 
   @override
@@ -122,10 +121,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (_markersAdded || _markerManager == null) return;
     _markersAdded = true;
 
-    // Register images for ALL reports (unfiltered) so that toggling filters
-    // never results in missing marker images on the map.
-    final allReports = MockDataService.instance.getReports();
-    await _markerManager!.registerMarkerImages(allReports);
+    if (!_imagesRegistered) {
+      _imagesRegistered = true;
+      await _markerManager!.registerMarkerImages(_reports);
+    }
     await _markerManager!.addClusteredSourceAndLayers(_reports);
     _setupTapInteractions();
   }
@@ -224,12 +223,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _onMarkerTapped(Report report) {
-    final reordered = ref.read(locationFeedReportsProvider(report));
-
-    if (reordered.isNotEmpty) {
-      ref.read(videoPreloadManagerProvider).preloadAround(reordered, 0);
-    }
-
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => LocationFeedScreen(initialReport: report),
@@ -268,12 +261,27 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final isLoading = ref.watch(locationLoadingProvider);
     final permission = ref.watch(locationPermissionProvider);
     final userPosition = ref.watch(userLocationProvider);
+    final mapReportsAsync = ref.watch(mapReportsProvider);
 
-    ref.listen<List<Report>>(mapReportsProvider, (previous, next) {
-      _reports = next;
-      _focusPulse?.reports = next;
-      if (_markersAdded) {
-        _markerManager?.refreshGeoJsonSource(next);
+    // When map reports resolve, update our local list and refresh markers.
+    ref.listen(mapReportsProvider, (previous, next) {
+      next.whenData((reports) {
+        _reports = reports;
+        _focusPulse?.reports = reports;
+        if (_markersAdded) {
+          if (!_imagesRegistered) {
+            _imagesRegistered = true;
+            _markerManager?.registerMarkerImages(reports);
+          }
+          _markerManager?.refreshGeoJsonSource(reports);
+        }
+      });
+    });
+
+    // Seed _reports from the current value on first build.
+    mapReportsAsync.whenData((reports) {
+      if (_reports.isEmpty && reports.isNotEmpty) {
+        _reports = reports;
       }
     });
 

@@ -8,6 +8,8 @@ import 'package:crimereport/core/theme/theme.dart';
 import 'package:crimereport/features/feed/data/models/report.dart';
 import 'package:crimereport/features/feed/presentation/widgets/feed_video_item.dart';
 import 'package:crimereport/features/feed/providers/feed_providers.dart';
+import 'package:crimereport/shared/widgets/loading_placeholder.dart';
+import 'package:crimereport/shared/widgets/api_error_handler.dart';
 
 /// Location-filtered feed screen with glass UI.
 ///
@@ -40,13 +42,6 @@ class _LocationFeedScreenState extends ConsumerState<LocationFeedScreen>
         statusBarIconBrightness: Brightness.light,
       ),
     );
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final reports = ref.read(
-        locationFeedReportsProvider(widget.initialReport),
-      );
-      ref.read(videoPreloadManagerProvider).preloadAround(reports, 0);
-    });
   }
 
   @override
@@ -63,90 +58,106 @@ class _LocationFeedScreenState extends ConsumerState<LocationFeedScreen>
     });
   }
 
-  void _onPageChanged(int index) {
+  void _onPageChanged(int index, List<Report> reports) {
     setState(() => _currentIndex = index);
-
-    final reports = ref.read(locationFeedReportsProvider(widget.initialReport));
     ref.read(videoPreloadManagerProvider).preloadAround(reports, index);
   }
 
   @override
   Widget build(BuildContext context) {
-    final reports = ref.watch(
+    final reportsAsync = ref.watch(
       locationFeedReportsProvider(widget.initialReport),
     );
     final topPadding = MediaQuery.of(context).padding.top;
 
-    // Clamp index when the list shrinks (e.g. after a filter change)
-    final safeIndex = reports.isEmpty
-        ? 0
-        : _currentIndex.clamp(0, reports.length - 1);
-    if (safeIndex != _currentIndex && reports.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() => _currentIndex = safeIndex);
-        if (_pageController.hasClients &&
-            _pageController.page?.round() != safeIndex) {
-          _pageController.jumpToPage(safeIndex);
-        }
-      });
-    }
-
     return Scaffold(
       backgroundColor: AppColors.background,
       extendBodyBehindAppBar: true,
-      body: Stack(
-        children: [
-          if (reports.isEmpty)
-            Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.filter_alt_off_rounded, size: 48, color: AppColors.textTertiary),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    'No reports match your filters',
-                    style: AppTypography.bodyMedium.copyWith(color: AppColors.textSecondary),
-                  ),
-                ],
-              ),
-            )
-          else
-            PageView.builder(
-              controller: _pageController,
-              scrollDirection: Axis.vertical,
-              onPageChanged: _onPageChanged,
-              itemCount: reports.length,
-              itemBuilder: (context, index) {
-                return FeedVideoItem(
-                  key: ValueKey(reports[index].id),
-                  report: reports[index],
-                  isActive: index == safeIndex && _isScreenActive,
-                  preloadManager: ref.read(videoPreloadManagerProvider),
-                  ignoreTabState: true,
-                );
-              },
-            ),
-
-          // Header overlay
-          Positioned(
-            top: topPadding + AppSpacing.sm,
-            left: AppSpacing.md,
-            right: AppSpacing.md,
-            child: Row(
-              children: [
-                // Close button with glass effect
-                _GlassCloseButton(onPressed: () => Navigator.of(context).pop()),
-                const Spacer(),
-                // Location badge with glass effect
-                _GlassLocationBadge(reportCount: reports.length),
-                const Spacer(),
-                // Spacer for symmetry
-                const SizedBox(width: 44),
-              ],
-            ),
+      body: reportsAsync.when(
+        loading: () => const LoadingPlaceholder(message: 'Loading nearby...'),
+        error: (error, _) => ApiErrorView(
+          error: error,
+          onRetry: () => ref.invalidate(
+            locationFeedReportsProvider(widget.initialReport),
           ),
-        ],
+        ),
+        data: (reports) {
+          final safeIndex = reports.isEmpty
+              ? 0
+              : _currentIndex.clamp(0, reports.length - 1);
+          if (safeIndex != _currentIndex && reports.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() => _currentIndex = safeIndex);
+              if (_pageController.hasClients &&
+                  _pageController.page?.round() != safeIndex) {
+                _pageController.jumpToPage(safeIndex);
+              }
+            });
+          }
+
+          if (reports.isNotEmpty) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              ref
+                  .read(videoPreloadManagerProvider)
+                  .preloadAround(reports, safeIndex);
+            });
+          }
+
+          return Stack(
+            children: [
+              if (reports.isEmpty)
+                Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.filter_alt_off_rounded,
+                          size: 48, color: AppColors.textTertiary),
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        'No reports match your filters',
+                        style: AppTypography.bodyMedium
+                            .copyWith(color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                PageView.builder(
+                  controller: _pageController,
+                  scrollDirection: Axis.vertical,
+                  onPageChanged: (i) => _onPageChanged(i, reports),
+                  itemCount: reports.length,
+                  itemBuilder: (context, index) {
+                    return FeedVideoItem(
+                      key: ValueKey(reports[index].id),
+                      report: reports[index],
+                      isActive: index == safeIndex && _isScreenActive,
+                      preloadManager: ref.read(videoPreloadManagerProvider),
+                      ignoreTabState: true,
+                    );
+                  },
+                ),
+
+              // Header overlay
+              Positioned(
+                top: topPadding + AppSpacing.sm,
+                left: AppSpacing.md,
+                right: AppSpacing.md,
+                child: Row(
+                  children: [
+                    _GlassCloseButton(
+                        onPressed: () => Navigator.of(context).pop()),
+                    const Spacer(),
+                    _GlassLocationBadge(reportCount: reports.length),
+                    const Spacer(),
+                    const SizedBox(width: 44),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

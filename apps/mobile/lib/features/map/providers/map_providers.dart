@@ -3,7 +3,7 @@ import 'package:geolocator/geolocator.dart';
 
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/constants/enums.dart';
-import 'package:crimereport/shared/data/mock_data_service.dart';
+import 'package:crimereport/features/feed/data/repositories/report_repository.dart';
 import 'package:crimereport/features/feed/data/models/report.dart';
 import 'package:crimereport/features/settings/providers/settings_providers.dart';
 
@@ -73,11 +73,22 @@ class LocationService {
 final locationServiceProvider =
     Provider<LocationService>((ref) => LocationService());
 
-/// Map reports filtered by active crime type filters.
-/// Rebuilds when filters change so the map can update its GeoJSON source.
-final mapReportsProvider = Provider<List<Report>>((ref) {
+/// Map reports fetched from the REST API and filtered by active crime type
+/// filters. Rebuilds when filters or location change so the map can update
+/// its GeoJSON source.
+final mapReportsProvider = FutureProvider<List<Report>>((ref) async {
   final activeFilters = ref.watch(crimeTypeFiltersProvider);
-  final allReports = MockDataService.instance.getReports();
+  final position = ref.watch(userLocationProvider);
+
+  if (position == null) return [];
+
+  final repo = ref.watch(reportRepositoryProvider);
+  final allReports = await repo.getNearbyReports(
+    lat: position.latitude,
+    lng: position.longitude,
+    radius: AppConstants.defaultRadiusMeters,
+  );
+
   if (activeFilters.length == ReportType.values.length) return allReports;
   return allReports.where((r) => activeFilters.contains(r.type)).toList();
 });
