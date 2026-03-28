@@ -18,6 +18,7 @@ export const DB_MAX_ACU = 4;
 
 export const REDIS_NODE_TYPE = 'cache.t4g.micro';
 
+// Dev/test defaults — used by CDK synth and snapshot tests
 export const ECS_CPU = 256;
 export const ECS_MEMORY = 512;
 export const ECS_DESIRED_COUNT = 1;
@@ -26,6 +27,13 @@ export const ECS_MAX_TASKS = 10;
 export const ECS_CPU_TARGET_PERCENT = 70;
 export const ECR_MAX_IMAGE_COUNT = 10;
 export const LOG_RETENTION_DAYS = 30;
+
+// Production overrides — apply via cdk.json context or environment-specific config
+export const PROD_ECS_CPU = 512;
+export const PROD_ECS_MEMORY = 1024;
+export const PROD_ECS_MIN_TASKS = 2; // HA: at least 2 tasks
+export const DB_BACKUP_RETENTION_DAYS = 7;
+export const ALARM_EMAIL = 'ops@reportcrime.app'; // placeholder
 
 export const MODERATION_CONFIDENCE_THRESHOLD = 80;
 export const MAX_UPLOAD_SIZE_BYTES = 100 * 1024 * 1024; // 100 MB
