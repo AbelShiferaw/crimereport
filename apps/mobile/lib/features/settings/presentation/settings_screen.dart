@@ -71,8 +71,7 @@ class SettingsScreen extends ConsumerWidget {
           subtitle: pushEnabled ? 'Enabled' : 'Disabled',
           trailing: Switch(
             value: pushEnabled,
-            onChanged: (v) =>
-                ref.read(pushNotificationsEnabledProvider.notifier).state = v,
+            onChanged: (v) => setPushNotificationsEnabled(ref, v),
             activeTrackColor: AppColors.primary.withValues(alpha: 0.5),
             activeThumbColor: AppColors.primary,
           ),
@@ -153,6 +152,7 @@ class SettingsScreen extends ConsumerWidget {
               divisions: 49,
               onChanged: (v) =>
                   ref.read(notificationRadiusProvider.notifier).state = v,
+              onChangeEnd: (v) => setNotificationRadius(ref, v),
             ),
           ),
           Row(
