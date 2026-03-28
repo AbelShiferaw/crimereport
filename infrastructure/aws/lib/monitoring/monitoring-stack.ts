@@ -1,10 +1,13 @@
 import * as cdk from 'aws-cdk-lib';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cw_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 import * as rds from 'aws-cdk-lib/aws-rds';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
-import { PROJECT_PREFIX } from '../config/constants';
+import { PROJECT_PREFIX, ALARM_EMAIL } from '../config/constants';
 
 export interface MonitoringStackProps extends cdk.StackProps {
   dbCluster: rds.IDatabaseCluster;
@@ -16,11 +19,25 @@ export interface MonitoringStackProps extends cdk.StackProps {
 
 export class MonitoringStack extends cdk.Stack {
   public readonly dashboard: cloudwatch.Dashboard;
+  public readonly alarmTopic: sns.Topic;
 
   constructor(scope: Construct, id: string, props: MonitoringStackProps) {
     super(scope, id, props);
 
     const { dbCluster, redisReplicationGroupId, ecsService, alb } = props;
+
+    // ── SNS Alarm Topic ──────────────────────────────────────
+
+    this.alarmTopic = new sns.Topic(this, 'AlarmTopic', {
+      topicName: `${PROJECT_PREFIX}-alarms`,
+      displayName: 'CrimeReport Operations Alarms',
+    });
+
+    this.alarmTopic.addSubscription(
+      new subscriptions.EmailSubscription(ALARM_EMAIL),
+    );
+
+    const snsAction = new cw_actions.SnsAction(this.alarmTopic);
 
     // ── Database Metrics ─────────────────────────────────────
 
@@ -40,6 +57,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    dbCpuAlarm.addAlarmAction(snsAction);
+    dbCpuAlarm.addOkAction(snsAction);
 
     const dbConnectionsAlarm = new cloudwatch.Alarm(this, 'DbConnectionsAlarm', {
       alarmName: `${PROJECT_PREFIX}-db-connections-high`,
@@ -50,6 +69,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    dbConnectionsAlarm.addAlarmAction(snsAction);
+    dbConnectionsAlarm.addOkAction(snsAction);
 
     const dbMemoryAlarm = new cloudwatch.Alarm(this, 'DbMemoryAlarm', {
       alarmName: `${PROJECT_PREFIX}-db-memory-low`,
@@ -60,6 +81,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    dbMemoryAlarm.addAlarmAction(snsAction);
+    dbMemoryAlarm.addOkAction(snsAction);
 
     // ── Redis Metrics ────────────────────────────────────────
 
@@ -100,6 +123,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    redisCpuAlarm.addAlarmAction(snsAction);
+    redisCpuAlarm.addOkAction(snsAction);
 
     const redisMemoryAlarm = new cloudwatch.Alarm(this, 'RedisMemoryAlarm', {
       alarmName: `${PROJECT_PREFIX}-redis-memory-high`,
@@ -110,6 +135,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    redisMemoryAlarm.addAlarmAction(snsAction);
+    redisMemoryAlarm.addOkAction(snsAction);
 
     const redisEvictionsAlarm = new cloudwatch.Alarm(this, 'RedisEvictionsAlarm', {
       alarmName: `${PROJECT_PREFIX}-redis-evictions`,
@@ -120,6 +147,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    redisEvictionsAlarm.addAlarmAction(snsAction);
+    redisEvictionsAlarm.addOkAction(snsAction);
 
     // ── ECS Metrics ──────────────────────────────────────────
 
@@ -139,6 +168,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    ecsCpuAlarm.addAlarmAction(snsAction);
+    ecsCpuAlarm.addOkAction(snsAction);
 
     const ecsMemoryAlarm = new cloudwatch.Alarm(this, 'EcsMemoryAlarm', {
       alarmName: `${PROJECT_PREFIX}-ecs-memory-high`,
@@ -149,6 +180,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    ecsMemoryAlarm.addAlarmAction(snsAction);
+    ecsMemoryAlarm.addOkAction(snsAction);
 
     // ── ALB Metrics ──────────────────────────────────────────
 
@@ -190,6 +223,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    alb5xxAlarm.addAlarmAction(snsAction);
+    alb5xxAlarm.addOkAction(snsAction);
 
     const albLatencyAlarm = new cloudwatch.Alarm(this, 'AlbLatencyAlarm', {
       alarmName: `${PROJECT_PREFIX}-alb-latency-high`,
@@ -200,6 +235,8 @@ export class MonitoringStack extends cdk.Stack {
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
+    albLatencyAlarm.addAlarmAction(snsAction);
+    albLatencyAlarm.addOkAction(snsAction);
 
     // ── Operations Dashboard ─────────────────────────────────
 

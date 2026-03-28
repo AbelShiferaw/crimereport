@@ -148,6 +148,10 @@ export class ComputeStack extends cdk.Stack {
         CDN_DOMAIN: cdnDomain,
         SNS_ANDROID_PLATFORM_ARN: snsAndroidPlatformArn,
         SNS_IOS_PLATFORM_ARN: snsIosPlatformArn,
+        LOG_LEVEL: 'info',
+        CORS_ORIGIN: 'https://reportcrime.app',
+        WS_PING_INTERVAL: '25000',
+        WS_PING_TIMEOUT: '5000',
       },
       secrets: {
         DATABASE_URL: ecs.Secret.fromSecretsManager(dbSecret),
