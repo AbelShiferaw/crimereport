@@ -40,7 +40,7 @@ void main() {
       upvotes: 42,
       commentCount: 10,
       createdAt: now,
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
       distanceKm: distanceKm,
     );
   }
