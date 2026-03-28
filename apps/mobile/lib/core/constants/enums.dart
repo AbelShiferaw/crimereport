@@ -32,7 +32,10 @@ enum MediaType {
 /// Current moderation status of a crime report.
 enum ReportStatus {
   pending('Pending Review'),
-  verified('Verified'),
+  uploading('Uploading'),
+  processing('Processing'),
+  active('Active'),
+  failed('Failed'),
   flagged('Flagged'),
   removed('Removed');
 
