@@ -254,3 +254,39 @@ describe('POST /api/v1/reports/:id/upvote', () => {
     expect(res.body.error).toBe('Validation failed');
   });
 });
+
+describe('POST /api/v1/reports — extended validation', () => {
+  it('returns 400 when type is missing', async () => {
+    const res = await request(app).post(BASE).send({ device_id: 'device-1', lat: 40.7128, lng: -74.006 });
+    expect(res.status).toBe(400);
+    expect(res.body.details).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'type' })]));
+  });
+  it('returns 400 when lat is missing', async () => {
+    const res = await request(app).post(BASE).send({ device_id: 'device-1', type: 'theft', lng: -74.006 });
+    expect(res.status).toBe(400);
+    expect(res.body.details).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'lat' })]));
+  });
+  it('returns 400 when lng is missing', async () => {
+    const res = await request(app).post(BASE).send({ device_id: 'device-1', type: 'theft', lat: 40.7128 });
+    expect(res.status).toBe(400);
+    expect(res.body.details).toEqual(expect.arrayContaining([expect.objectContaining({ field: 'lng' })]));
+  });
+});
+
+describe('GET /api/v1/reports — extended', () => {
+  it('returns empty data when offset exceeds total', async () => {
+    mockReport.findNearby.mockResolvedValueOnce([]);
+    const res = await request(app).get(BASE).query({ lat: 40.71, lng: -74.0, radius: 5000, offset: 999 });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+    expect(res.body.meta.count).toBe(0);
+  });
+});
+
+describe('POST /api/v1/reports/:id/upvote — extended', () => {
+  it('returns 404 for non-existent report', async () => {
+    mockReport.findById.mockResolvedValueOnce(null);
+    const res = await request(app).post(`${BASE}/does-not-exist/upvote`).send({ device_id: 'device-1' });
+    expect(res.status).toBe(404);
+  });
+});

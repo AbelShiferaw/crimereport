@@ -322,3 +322,39 @@ describe('GET /api/v1/reports/:id/media/status', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('POST /api/v1/reports/:id/upload — extended', () => {
+  const validBody = { device_id: 'device-1', file_type: 'image', content_type: 'image/jpeg' };
+  it('returns 400 when report already has 5 media items', async () => {
+    mockReport.findById.mockResolvedValueOnce(fakeReport);
+    mockDevice.getOrCreate.mockResolvedValueOnce(fakeDevice);
+    mockMedia.findByReportId.mockResolvedValueOnce(Array.from({ length: 5 }, (_, i) => ({ ...fakeMedia, id: `m-${i}` })));
+    const res = await request(app).post(`${BASE}/r-123/upload`).send(validBody);
+    expect(res.status).toBe(400);
+  });
+  it('returns 403 for removed report', async () => {
+    mockReport.findById.mockResolvedValueOnce({ ...fakeReport, status: 'removed' });
+    const res = await request(app).post(`${BASE}/r-123/upload`).send(validBody);
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /api/v1/reports/:id/upload/complete — extended', () => {
+  it('returns 400 when file not in S3', async () => {
+    mockReport.findById.mockResolvedValueOnce(fakeReport);
+    mockMedia.findByMediaKey.mockResolvedValueOnce(fakeMedia);
+    mockS3.objectExists.mockResolvedValueOnce(false);
+    const res = await request(app).post(`${BASE}/r-123/upload/complete`).send({ device_id: 'device-1', media_key: 'images/r-123/file-1.jpg' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/v1/reports/:id/media/status — extended', () => {
+  it('returns empty array for report with no media', async () => {
+    mockReport.findById.mockResolvedValueOnce(fakeReport);
+    mockMedia.findByReportId.mockResolvedValueOnce([]);
+    const res = await request(app).get(`${BASE}/r-123/media/status`);
+    expect(res.status).toBe(200);
+    expect(res.body.media).toEqual([]);
+  });
+});
