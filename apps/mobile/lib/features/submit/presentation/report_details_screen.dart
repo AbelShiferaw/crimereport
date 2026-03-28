@@ -2,13 +2,17 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/constants/enums.dart';
 import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/feed/providers/feed_providers.dart';
+import 'package:crimereport/features/submit/providers/upload_provider.dart';
+import 'package:crimereport/features/submit/presentation/widgets/upload_overlay.dart';
 
-class ReportDetailsScreen extends StatefulWidget {
+class ReportDetailsScreen extends ConsumerStatefulWidget {
   final String filePath;
   final bool isVideo;
 
@@ -19,10 +23,11 @@ class ReportDetailsScreen extends StatefulWidget {
   });
 
   @override
-  State<ReportDetailsScreen> createState() => _ReportDetailsScreenState();
+  ConsumerState<ReportDetailsScreen> createState() =>
+      _ReportDetailsScreenState();
 }
 
-class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
+class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
   final _descriptionController = TextEditingController();
   final _descriptionFocus = FocusNode();
   static const int _maxDescriptionLength = AppConstants.maxDescriptionLength;
@@ -30,7 +35,6 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
   ReportType? _selectedType;
   Position? _location;
   bool _isLoadingLocation = true;
-  bool _isSubmitting = false;
   String? _locationError;
 
   @override
@@ -90,25 +94,44 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
       _selectedType != null &&
       _descriptionController.text.trim().isNotEmpty;
 
-  Future<void> _submit() async {
-    if (!_isFormValid || _isSubmitting) return;
+  void _submit() {
+    if (!_isFormValid) return;
 
     _descriptionFocus.unfocus();
-    setState(() => _isSubmitting = true);
 
-    // Simulate network delay for mock submission
-    await Future.delayed(const Duration(milliseconds: 800));
-
-    if (!mounted) return;
-
-    setState(() => _isSubmitting = false);
-
-    // Pop first, then show snackbar on the parent scaffold so it's visible
-    Navigator.of(context).pop(true);
+    ref.read(uploadProvider.notifier).submit(
+          filePath: widget.filePath,
+          type: _selectedType!.name,
+          description: _descriptionController.text.trim(),
+          lat: _location?.latitude ?? AppConstants.defaultLatitude,
+          lng: _location?.longitude ?? AppConstants.defaultLongitude,
+          address: null,
+        );
   }
 
   @override
   Widget build(BuildContext context) {
+    final uploadState = ref.watch(uploadProvider);
+
+    ref.listen<UploadState>(uploadProvider, (previous, next) {
+      if (next.phase == UploadPhase.done) {
+        ref.invalidate(feedReportsProvider);
+        Navigator.of(context).popUntil((route) => route.isFirst);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Report submitted successfully!'),
+            backgroundColor: AppColors.success,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+            ),
+          ),
+        );
+      }
+    });
+
+    final isUploading = uploadState.phase != UploadPhase.idle;
+
     return GestureDetector(
       onTap: () => _descriptionFocus.unfocus(),
       child: Scaffold(
@@ -123,31 +146,44 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
           title: Text('Report Details', style: AppTypography.titleMedium),
           centerTitle: true,
         ),
-        body: Column(
+        body: Stack(
           children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.lg,
+            Column(
+              children: [
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      AppSpacing.sm,
+                      AppSpacing.md,
+                      AppSpacing.lg,
+                    ),
+                    children: [
+                      _buildMediaPreview(),
+                      const SizedBox(height: AppSpacing.lg),
+                      _buildSectionLabel('Crime Type'),
+                      const SizedBox(height: AppSpacing.sm),
+                      _buildCrimeTypeSelector(),
+                      const SizedBox(height: AppSpacing.lg),
+                      _buildSectionLabel('Description'),
+                      const SizedBox(height: AppSpacing.sm),
+                      _buildDescriptionField(),
+                      const SizedBox(height: AppSpacing.lg),
+                      _buildSectionLabel('Location'),
+                      const SizedBox(height: AppSpacing.sm),
+                      _buildLocationSection(),
+                    ],
+                  ),
                 ),
-                children: [
-                  _buildMediaPreview(),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildSectionLabel('Crime Type'),
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildCrimeTypeSelector(),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildSectionLabel('Description'),
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildDescriptionField(),
-                  const SizedBox(height: AppSpacing.lg),
-                  _buildSectionLabel('Location'),
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildLocationSection(),
-                ],
-              ),
+                _buildBottomBar(),
+              ],
             ),
-            _buildBottomBar(),
+            if (isUploading)
+              UploadOverlay(
+                uploadState: uploadState,
+                onCancel: () => ref.read(uploadProvider.notifier).cancel(),
+                onDismiss: () => ref.read(uploadProvider.notifier).reset(),
+              ),
           ],
         ),
       ),
@@ -189,15 +225,16 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
               else
                 Image.file(File(widget.filePath), fit: BoxFit.cover),
 
-              // Badge
               Positioned(
                 bottom: AppSpacing.xs,
                 left: AppSpacing.xs,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                   decoration: BoxDecoration(
                     color: widget.isVideo ? AppColors.primary : AppColors.info,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                    borderRadius:
+                        BorderRadius.circular(AppSpacing.radiusSm),
                   ),
                   child: Text(
                     widget.isVideo ? 'VIDEO' : 'PHOTO',
@@ -210,7 +247,6 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
                 ),
               ),
 
-              // Change media button
               Positioned(
                 top: AppSpacing.xs,
                 right: AppSpacing.xs,
@@ -278,8 +314,10 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
                 Text(
                   type.displayName,
                   style: AppTypography.labelMedium.copyWith(
-                    color: isSelected ? type.color : AppColors.textSecondary,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                    color:
+                        isSelected ? type.color : AppColors.textSecondary,
+                    fontWeight:
+                        isSelected ? FontWeight.w600 : FontWeight.w400,
                   ),
                 ),
               ],
@@ -311,11 +349,13 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-          borderSide: const BorderSide(color: AppColors.divider, width: 0.5),
+          borderSide:
+              const BorderSide(color: AppColors.divider, width: 0.5),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-          borderSide: const BorderSide(color: AppColors.primary, width: 1),
+          borderSide:
+              const BorderSide(color: AppColors.primary, width: 1),
         ),
         contentPadding: const EdgeInsets.all(AppSpacing.md),
         counterStyle: AppTypography.caption.copyWith(
@@ -346,7 +386,8 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
               _location != null
                   ? Icons.location_on_rounded
                   : Icons.location_off_rounded,
-              color: _location != null ? AppColors.success : AppColors.textTertiary,
+              color:
+                  _location != null ? AppColors.success : AppColors.textTertiary,
               size: 20,
             ),
           ),
@@ -421,6 +462,9 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
   }
 
   Widget _buildBottomBar() {
+    final isUploading =
+        ref.watch(uploadProvider).phase != UploadPhase.idle;
+
     return Container(
       padding: EdgeInsets.fromLTRB(
         AppSpacing.md,
@@ -433,47 +477,35 @@ class _ReportDetailsScreenState extends State<ReportDetailsScreen> {
         border: Border(top: BorderSide(color: AppColors.divider, width: 0.5)),
       ),
       child: GestureDetector(
-        onTap: (_isFormValid && !_isSubmitting) ? _submit : null,
+        onTap: (_isFormValid && !isUploading) ? _submit : null,
         child: AnimatedContainer(
           duration: AppConstants.standardTransition,
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
           decoration: BoxDecoration(
-            color: (_isFormValid && !_isSubmitting) ? AppColors.primary : AppColors.elevated,
+            color: (_isFormValid && !isUploading)
+                ? AppColors.primary
+                : AppColors.elevated,
             borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
           ),
-          child: _isSubmitting
-              ? const Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2,
-                    ),
-                  ),
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.send_rounded,
-                      color: _isFormValid
-                          ? Colors.white
-                          : AppColors.textDisabled,
-                      size: 20,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Text(
-                      'Submit Report',
-                      style: AppTypography.titleSmall.copyWith(
-                        color: _isFormValid
-                            ? Colors.white
-                            : AppColors.textDisabled,
-                      ),
-                    ),
-                  ],
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.send_rounded,
+                color: _isFormValid ? Colors.white : AppColors.textDisabled,
+                size: 20,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                'Submit Report',
+                style: AppTypography.titleSmall.copyWith(
+                  color:
+                      _isFormValid ? Colors.white : AppColors.textDisabled,
                 ),
+              ),
+            ],
+          ),
         ),
       ),
     );
