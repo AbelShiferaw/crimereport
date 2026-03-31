@@ -11,6 +11,7 @@ import { CacheStack } from '../lib/data/cache-stack';
 import { MediaStack } from '../lib/media/media-stack';
 import { ComputeStack } from '../lib/compute/compute-stack';
 import { MonitoringStack } from '../lib/monitoring/monitoring-stack';
+import { DnsStack } from '../lib/network/dns-stack';
 import { SnsStack } from '../lib/notifications/sns-stack';
 import { CicdStack } from '../lib/cicd/cicd-stack';
 import { DEFAULT_TAGS, PROJECT_PREFIX } from '../lib/config/constants';
@@ -120,3 +121,12 @@ const monitoringStack = new MonitoringStack(app, 'CrimeReport-Monitoring', {
 monitoringStack.addDependency(databaseStack);
 monitoringStack.addDependency(cacheStack);
 monitoringStack.addDependency(computeStack);
+
+const dnsStack = new DnsStack(app, 'CrimeReport-Dns', {
+  env,
+  description: 'CrimeReport - Route 53 hosted zone and DNS records',
+  alb: computeStack.alb,
+  distribution: mediaStack.distribution,
+});
+dnsStack.addDependency(computeStack);
+dnsStack.addDependency(mediaStack);

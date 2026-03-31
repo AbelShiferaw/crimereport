@@ -4,7 +4,39 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { Template, Match } from 'aws-cdk-lib/assertions';
-import { ComputeStack } from '../../lib/compute/compute-stack';
+import { ComputeStack, ComputeStackProps } from '../../lib/compute/compute-stack';
+
+function buildComputeStackProps(
+  depsStack: cdk.Stack,
+  overrides: Partial<ComputeStackProps> = {},
+): ComputeStackProps {
+  const vpc = new ec2.Vpc(depsStack, `Vpc${Math.random().toString(36).slice(2, 6)}`, { maxAzs: 2 });
+  const albSg = new ec2.SecurityGroup(depsStack, `AlbSg${Math.random().toString(36).slice(2, 6)}`, { vpc });
+  const ecsSg = new ec2.SecurityGroup(depsStack, `EcsSg${Math.random().toString(36).slice(2, 6)}`, { vpc });
+  const taskRole = new iam.Role(depsStack, `TaskRole${Math.random().toString(36).slice(2, 6)}`, {
+    assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
+  });
+  const dbSecret = new secretsmanager.Secret(depsStack, `DbSecret${Math.random().toString(36).slice(2, 6)}`);
+
+  return {
+    env: { account: '123456789012', region: 'us-east-1' },
+    vpc,
+    albSecurityGroup: albSg,
+    ecsSecurityGroup: ecsSg,
+    taskRole,
+    dbSecret,
+    redisEndpoint: 'redis.test.cache.amazonaws.com',
+    redisPort: '6379',
+    wafAclArn: 'arn:aws:wafv2:us-east-1:123456789012:regional/webacl/test/abc123',
+    dockerDir: path.join(__dirname, '..', '..', '..', '..', 'backend', 'api'),
+    s3UploadsBucket: 'crimereport-uploads-123456789012',
+    s3MediaBucket: 'crimereport-media-123456789012',
+    cdnDomain: 'd111111abcdef8.cloudfront.net',
+    snsAndroidPlatformArn: 'arn:aws:sns:us-east-1:123456789012:app/GCM/crimereport-android',
+    snsIosPlatformArn: 'arn:aws:sns:us-east-1:123456789012:app/APNS/crimereport-ios',
+    ...overrides,
+  };
+}
 
 describe('ComputeStack', () => {
   let template: Template;
@@ -117,8 +149,8 @@ describe('ComputeStack', () => {
   test('creates Fargate task definition with correct CPU and memory', () => {
     template.hasResourceProperties('AWS::ECS::TaskDefinition', {
       Family: 'crimereport-api',
-      Cpu: '256',
-      Memory: '512',
+      Cpu: '512',
+      Memory: '1024',
       NetworkMode: 'awsvpc',
       RequiresCompatibilities: ['FARGATE'],
     });
@@ -238,7 +270,7 @@ describe('ComputeStack', () => {
     template.hasResourceProperties('AWS::ECS::Service', {
       ServiceName: 'crimereport-api',
       LaunchType: 'FARGATE',
-      DesiredCount: 1,
+      DesiredCount: 2,
       DeploymentConfiguration: Match.objectLike({
         MinimumHealthyPercent: 50,
         MaximumPercent: 200,
@@ -271,7 +303,7 @@ describe('ComputeStack', () => {
 
   test('creates auto-scaling target', () => {
     template.hasResourceProperties('AWS::ApplicationAutoScaling::ScalableTarget', {
-      MinCapacity: 1,
+      MinCapacity: 2,
       MaxCapacity: 10,
       ScalableDimension: 'ecs:service:DesiredCount',
       ServiceNamespace: 'ecs',
@@ -295,6 +327,60 @@ describe('ComputeStack', () => {
   test('associates WAF WebACL with ALB', () => {
     template.hasResourceProperties('AWS::WAFv2::WebACLAssociation', {
       WebACLArn: 'arn:aws:wafv2:us-east-1:123456789012:regional/webacl/test/abc123',
+    });
+  });
+});
+
+describe('ComputeStack with HTTPS', () => {
+  let template: Template;
+  const certArn = 'arn:aws:acm:us-east-1:123456789012:certificate/test-cert-id';
+
+  beforeAll(() => {
+    const app = new cdk.App();
+    const env = { account: '123456789012', region: 'us-east-1' };
+    const depsStack = new cdk.Stack(app, 'HttpsDepsStack', { env });
+    const props = buildComputeStackProps(depsStack, { certificateArn: certArn });
+    const stack = new ComputeStack(app, 'TestComputeHttps', props);
+    template = Template.fromStack(stack);
+  });
+
+  test('creates HTTPS listener on port 443', () => {
+    template.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', {
+      Port: 443,
+      Protocol: 'HTTPS',
+    });
+  });
+
+  test('HTTPS listener references ACM certificate', () => {
+    template.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', {
+      Port: 443,
+      Certificates: Match.arrayWith([
+        Match.objectLike({ CertificateArn: certArn }),
+      ]),
+    });
+  });
+
+  test('HTTPS listener uses TLS 1.3 security policy', () => {
+    template.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', {
+      Port: 443,
+      SslPolicy: Match.stringLikeRegexp('.*TLS13.*'),
+    });
+  });
+
+  test('HTTP listener redirects to HTTPS', () => {
+    template.hasResourceProperties('AWS::ElasticLoadBalancingV2::Listener', {
+      Port: 80,
+      Protocol: 'HTTP',
+      DefaultActions: Match.arrayWith([
+        Match.objectLike({
+          Type: 'redirect',
+          RedirectConfig: Match.objectLike({
+            Protocol: 'HTTPS',
+            Port: '443',
+            StatusCode: 'HTTP_301',
+          }),
+        }),
+      ]),
     });
   });
 });

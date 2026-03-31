@@ -48,7 +48,7 @@ export class MediaStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
-      versioned: false,
+      versioned: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       eventBridgeEnabled: true,
@@ -74,7 +74,7 @@ export class MediaStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
-      versioned: false,
+      versioned: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
     });
