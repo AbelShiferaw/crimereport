@@ -292,6 +292,86 @@ export class MonitoringStack extends cdk.Stack {
       new cloudwatch.GraphWidget({ title: 'Response Time (s)', left: [albResponseTimeMetric], leftAnnotations: [albLatencyAlarm.toAnnotation()], width: 8 }),
     );
 
+    // ── Custom Application Metrics (EMF) ───────────────────
+
+    const emfNamespace = 'CrimeReport';
+    const emfDimensions = { Service: 'api' };
+
+    const reportsCreatedMetric = new cloudwatch.Metric({
+      namespace: emfNamespace,
+      metricName: 'ReportsCreated',
+      dimensionsMap: emfDimensions,
+      statistic: 'Sum',
+      period: cdk.Duration.minutes(5),
+    });
+
+    const mediaUploadsCompletedMetric = new cloudwatch.Metric({
+      namespace: emfNamespace,
+      metricName: 'MediaUploadsCompleted',
+      dimensionsMap: emfDimensions,
+      statistic: 'Sum',
+      period: cdk.Duration.minutes(5),
+    });
+
+    const mediaFailureRateMetric = new cloudwatch.Metric({
+      namespace: emfNamespace,
+      metricName: 'MediaFailureRate',
+      dimensionsMap: emfDimensions,
+      statistic: 'Sum',
+      period: cdk.Duration.minutes(5),
+    });
+
+    const mediaProcessingLatencyMetric = new cloudwatch.Metric({
+      namespace: emfNamespace,
+      metricName: 'MediaProcessingLatency',
+      dimensionsMap: emfDimensions,
+      statistic: 'Average',
+      period: cdk.Duration.minutes(5),
+    });
+
+    const wsConnectionsMetric = new cloudwatch.Metric({
+      namespace: emfNamespace,
+      metricName: 'WebSocketConnections',
+      dimensionsMap: emfDimensions,
+      statistic: 'Average',
+      period: cdk.Duration.minutes(1),
+    });
+
+    const rateLimitHitsMetric = new cloudwatch.Metric({
+      namespace: emfNamespace,
+      metricName: 'RateLimitHits',
+      dimensionsMap: emfDimensions,
+      statistic: 'Sum',
+      period: cdk.Duration.minutes(5),
+    });
+
+    const mediaFailureAlarm = new cloudwatch.Alarm(this, 'MediaFailureRateAlarm', {
+      alarmName: `${PROJECT_PREFIX}-media-failure-rate`,
+      alarmDescription: 'Media processing failures exceeded threshold — possible pipeline issue',
+      metric: mediaFailureRateMetric,
+      threshold: 5,
+      evaluationPeriods: 3,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    mediaFailureAlarm.addAlarmAction(snsAction);
+    mediaFailureAlarm.addOkAction(snsAction);
+
+    // Application metrics dashboard row
+    this.dashboard.addWidgets(
+      new cloudwatch.TextWidget({ markdown: '## Application Metrics (EMF)', width: 24, height: 1 }),
+    );
+    this.dashboard.addWidgets(
+      new cloudwatch.GraphWidget({ title: 'Reports Created', left: [reportsCreatedMetric], width: 8 }),
+      new cloudwatch.GraphWidget({ title: 'Media Uploads Completed', left: [mediaUploadsCompletedMetric], width: 8 }),
+      new cloudwatch.GraphWidget({ title: 'Media Failures', left: [mediaFailureRateMetric], leftAnnotations: [mediaFailureAlarm.toAnnotation()], width: 8 }),
+    );
+    this.dashboard.addWidgets(
+      new cloudwatch.GraphWidget({ title: 'Media Processing Latency (ms)', left: [mediaProcessingLatencyMetric], width: 8 }),
+      new cloudwatch.GraphWidget({ title: 'WebSocket Connections', left: [wsConnectionsMetric], width: 8 }),
+      new cloudwatch.GraphWidget({ title: 'Rate Limit Hits', left: [rateLimitHitsMetric], width: 8 }),
+    );
+
     // Alarms summary
     this.dashboard.addWidgets(
       new cloudwatch.TextWidget({ markdown: '## Alarm Status', width: 24, height: 1 }),
@@ -304,6 +384,7 @@ export class MonitoringStack extends cdk.Stack {
           redisCpuAlarm, redisMemoryAlarm, redisEvictionsAlarm,
           ecsCpuAlarm, ecsMemoryAlarm,
           alb5xxAlarm, albLatencyAlarm,
+          mediaFailureAlarm,
         ],
         width: 24,
       }),
