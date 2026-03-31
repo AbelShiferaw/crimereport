@@ -1,13 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:crimereport/features/feed/data/models/comment.dart';
 import 'package:crimereport/features/feed/data/repositories/comment_repository.dart';
-import 'package:crimereport/features/feed/providers/feed_providers.dart';
-import 'package:crimereport/features/feed/providers/realtime_comments_provider.dart';
 import 'package:crimereport/features/feed/presentation/widgets/comments_sheet.dart';
 import 'package:crimereport/features/feed/presentation/widgets/comment_tile.dart';
 import 'package:crimereport/shared/data/api/api_client.dart';
@@ -59,7 +55,7 @@ class FakeCommentRepository extends CommentRepository {
     createCallCount++;
     if (shouldThrow) throw Exception('Failed to create');
     return _makeComment(
-      id: 'new_${createCallCount}',
+      id: 'new_$createCallCount',
       reportId: reportId,
       content: content,
     );
@@ -119,12 +115,9 @@ void main() {
                       context: context,
                       isScrollControlled: true,
                       backgroundColor: Colors.transparent,
-                      builder: (_) => ProviderScope(
-                        parent: ProviderScope.containerOf(context),
-                        child: SizedBox(
-                          height: 600,
-                          child: CommentsSheet(reportId: reportId),
-                        ),
+                      builder: (_) => SizedBox(
+                        height: 600,
+                        child: CommentsSheet(reportId: reportId),
                       ),
                     );
                   },

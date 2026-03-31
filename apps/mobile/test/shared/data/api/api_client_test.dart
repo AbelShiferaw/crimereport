@@ -1,50 +1,7 @@
-import 'dart:convert';
-
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:crimereport/shared/data/api/api_client.dart';
-
-/// A Dio HttpClientAdapter that returns pre-configured responses.
-class _MockAdapter implements HttpClientAdapter {
-  final int statusCode;
-  final Map<String, List<String>> responseHeaders;
-
-  _MockAdapter({
-    required this.statusCode,
-    this.responseHeaders = const {},
-  });
-
-  @override
-  Future<ResponseBody> fetch(
-    RequestOptions options,
-    Stream<List<int>>? requestStream,
-    Future<void>? cancelFuture,
-  ) async {
-    if (statusCode >= 400) {
-      throw DioException(
-        requestOptions: options,
-        response: Response(
-          requestOptions: options,
-          statusCode: statusCode,
-          headers: Headers.fromMap(responseHeaders),
-          data: '{}',
-        ),
-        type: DioExceptionType.badResponse,
-      );
-    }
-    return ResponseBody.fromString(
-      jsonEncode({'ok': true}),
-      statusCode,
-      headers: responseHeaders.map(
-        (k, v) => MapEntry(k, v),
-      ),
-    );
-  }
-
-  @override
-  void close({bool force = false}) {}
-}
 
 void main() {
   group('RateLimitException', () {
@@ -110,9 +67,6 @@ void main() {
   group('ApiClient 429 interceptor', () {
     test('converts 429 response to RateLimitException with retry-after',
         () async {
-      final client = ApiClient(baseUrl: 'http://test.example.com');
-
-      // Directly test the interceptor logic by constructing the scenario
       final requestOptions = RequestOptions(path: '/test');
       final dioError = DioException(
         requestOptions: requestOptions,
