@@ -20,6 +20,7 @@
     "@aws-sdk/client-sns": "^3.1004.0",
     "@aws-sdk/s3-request-presigner": "^3.1000.0",
     "@socket.io/redis-adapter": "^8.3.0",
+    "aws-embedded-metrics": "^4.2.1",
     "aws-sdk": "^2.1548.0",
     "compression": "^1.8.1",
     "cors": "^2.8.5",

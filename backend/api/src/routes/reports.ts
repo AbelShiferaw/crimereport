@@ -16,6 +16,7 @@ import * as upvoteModel from '../models/report-upvote';
 import * as deviceActivity from '../models/device-activity';
 import * as pushModel from '../models/push-subscription';
 import * as sns from '../lib/sns';
+import * as metrics from '../lib/metrics';
 import { logger } from '../lib/logger';
 
 const MAX_DAILY_REPORTS = 10;
@@ -39,6 +40,10 @@ router.post('/', writeLimiter, validate(createReportSchema), async (req: Request
 
   const report = await reportModel.create({ device_id, type, description, lat, lng, address });
   await deviceActivity.incrementReportCount(device_id);
+
+  metrics.recordReportCreated(type).catch((err) =>
+    logger.warn({ err }, 'failed to record ReportsCreated metric'),
+  );
 
   res.status(201).json(report);
 });
@@ -304,9 +309,15 @@ router.get('/:id/media/status', async (req: Request, res: Response) => {
       sendNearbyNotifications(updatedReport).catch((err) =>
         logger.error({ err, reportId: updatedReport.id }, 'push notification batch failed'),
       );
+      metrics.recordMediaUploadCompleted().catch((err) =>
+        logger.warn({ err }, 'failed to record MediaUploadsCompleted metric'),
+      );
     }
   } else if (anyFailed && report.status === 'processing') {
     await reportModel.updateStatus(id, 'failed');
+    metrics.recordMediaFailure().catch((err) =>
+      logger.warn({ err }, 'failed to record MediaFailureRate metric'),
+    );
   }
 
   const currentStatus = allActive ? 'active' : anyFailed ? 'failed' : report.status;
