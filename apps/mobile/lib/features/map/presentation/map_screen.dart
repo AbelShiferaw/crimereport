@@ -8,21 +8,15 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/theme/theme.dart';
-import 'package:crimereport/shared/data/mock_data_service.dart';
 import 'package:crimereport/shared/widgets/loading_placeholder.dart';
 import 'package:crimereport/shared/widgets/permission_placeholder.dart';
 import 'package:crimereport/features/feed/data/models/report.dart';
-import 'package:crimereport/features/feed/providers/feed_providers.dart';
 import 'package:crimereport/features/map/providers/map_providers.dart';
 import 'package:crimereport/features/map/presentation/location_feed_screen.dart';
 import 'package:crimereport/features/map/presentation/map_constants.dart';
 import 'package:crimereport/features/map/presentation/map_focus_pulse.dart';
 import 'package:crimereport/features/map/presentation/map_marker_manager.dart';
 
-/// Interactive Mapbox map screen with clustering and focus highlight.
-///
-/// Delegates marker management to [MapMarkerManager] and pulse animation
-/// to [MapFocusPulse] to keep this widget focused on lifecycle and UI.
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
 
@@ -37,13 +31,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   List<Report> _reports = [];
   bool _markersAdded = false;
+  bool _imagesRegistered = false;
 
   @override
   void initState() {
     super.initState();
     _initMapbox();
     _initLocation();
-    _reports = ref.read(mapReportsProvider);
   }
 
   @override
@@ -59,10 +53,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       MapboxOptions.setAccessToken(mapboxToken);
     }
   }
-
-  // ----------------------------------------------------------
-  // Location
-  // ----------------------------------------------------------
 
   Future<void> _initLocation() async {
     final locationService = ref.read(locationServiceProvider);
@@ -105,10 +95,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  // ----------------------------------------------------------
-  // Map callbacks
-  // ----------------------------------------------------------
-
   void _onMapCreated(MapboxMap mapboxMap) async {
     _mapboxMap = mapboxMap;
     _markerManager = MapMarkerManager(mapboxMap);
@@ -122,10 +108,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (_markersAdded || _markerManager == null) return;
     _markersAdded = true;
 
-    // Register images for ALL reports (unfiltered) so that toggling filters
-    // never results in missing marker images on the map.
-    final allReports = MockDataService.instance.getReports();
-    await _markerManager!.registerMarkerImages(allReports);
+    if (!_imagesRegistered) {
+      _imagesRegistered = true;
+      await _markerManager!.registerMarkerImages(_reports);
+    }
     await _markerManager!.addClusteredSourceAndLayers(_reports);
     _setupTapInteractions();
   }
@@ -133,10 +119,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   void _onCameraChanged(CameraChangedEventData data) {
     _focusPulse?.onCameraChanged(data);
   }
-
-  // ----------------------------------------------------------
-  // Tap interactions
-  // ----------------------------------------------------------
 
   void _setupTapInteractions() {
     if (_mapboxMap == null) return;
@@ -162,7 +144,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           final report = _reports.firstWhere((r) => r.id == reportId);
           _onMarkerTapped(report);
         } on StateError {
-          // Report not in list (e.g. filtered out)
+          // Report not in list
         }
       },
     );
@@ -224,22 +206,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   void _onMarkerTapped(Report report) {
-    final reordered = ref.read(locationFeedReportsProvider(report));
-
-    if (reordered.isNotEmpty) {
-      ref.read(videoPreloadManagerProvider).preloadAround(reordered, 0);
-    }
-
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => LocationFeedScreen(initialReport: report),
       ),
     );
   }
-
-  // ----------------------------------------------------------
-  // Location puck
-  // ----------------------------------------------------------
 
   Future<void> _setupLocationPuck() async {
     if (_mapboxMap == null) return;
@@ -259,21 +231,30 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  // ----------------------------------------------------------
-  // Build
-  // ----------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     final isLoading = ref.watch(locationLoadingProvider);
     final permission = ref.watch(locationPermissionProvider);
     final userPosition = ref.watch(userLocationProvider);
+    final mapReportsAsync = ref.watch(mapReportsProvider);
 
-    ref.listen<List<Report>>(mapReportsProvider, (previous, next) {
-      _reports = next;
-      _focusPulse?.reports = next;
-      if (_markersAdded) {
-        _markerManager?.refreshGeoJsonSource(next);
+    ref.listen(mapReportsProvider, (previous, next) {
+      next.whenData((reports) {
+        _reports = reports;
+        _focusPulse?.reports = reports;
+        if (_markersAdded) {
+          if (!_imagesRegistered) {
+            _imagesRegistered = true;
+            _markerManager?.registerMarkerImages(reports);
+          }
+          _markerManager?.refreshGeoJsonSource(reports);
+        }
+      });
+    });
+
+    mapReportsAsync.whenData((reports) {
+      if (_reports.isEmpty && reports.isNotEmpty) {
+        _reports = reports;
       }
     });
 

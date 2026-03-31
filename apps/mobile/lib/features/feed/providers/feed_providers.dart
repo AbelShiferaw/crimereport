@@ -1,12 +1,15 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/constants/enums.dart';
-import 'package:crimereport/shared/data/mock_data_service.dart';
+import 'package:crimereport/features/feed/data/repositories/report_repository.dart';
+import 'package:crimereport/features/feed/data/repositories/comment_repository.dart';
 import 'package:crimereport/features/settings/providers/settings_providers.dart';
 import 'package:crimereport/features/feed/data/models/comment.dart';
 import 'package:crimereport/features/feed/data/models/report.dart';
 import 'package:crimereport/features/feed/presentation/managers/video_preload_manager.dart';
+import 'package:crimereport/features/map/providers/map_providers.dart';
 
 /// Current app tab index (0=Feed, 1=Map, 2=Submit, 3=Settings).
 /// Used to pause videos when navigating away from feed.
@@ -18,11 +21,24 @@ final isFeedTabActiveProvider = Provider<bool>((ref) {
 });
 
 /// Provider for feed reports, filtered by active crime type filters.
+///
+/// Uses the REST API via [ReportRepository] and the user's current location
+/// for nearby report queries. Returns an empty list when location is unknown.
 final feedReportsProvider = FutureProvider.autoDispose<List<Report>>((
   ref,
 ) async {
   final activeFilters = ref.watch(crimeTypeFiltersProvider);
-  final reports = await MockDataService.instance.getReportsAsync();
+  final position = ref.watch(userLocationProvider);
+
+  if (position == null) return [];
+
+  final repo = ref.watch(reportRepositoryProvider);
+  final reports = await repo.getNearbyReports(
+    lat: position.latitude,
+    lng: position.longitude,
+    radius: AppConstants.defaultRadiusMeters,
+  );
+
   if (activeFilters.length == ReportType.values.length) return reports;
   return reports.where((r) => activeFilters.contains(r.type)).toList();
 });
@@ -40,21 +56,30 @@ final videoPreloadManagerProvider = Provider<VideoPreloadManager>((ref) {
 /// Tracks which reports the user has upvoted (local state).
 final upvotedReportsProvider = StateProvider<Set<String>>((ref) => {});
 
-/// Helper to toggle upvote state for a report.
+/// Toggle upvote via the REST API, then update local state.
+///
+/// Safe to call fire-and-forget — errors are caught and logged.
 void toggleUpvote(WidgetRef ref, String reportId) {
-  final notifier = ref.read(upvotedReportsProvider.notifier);
-  final current = notifier.state;
-  if (current.contains(reportId)) {
-    notifier.state = {...current}..remove(reportId);
-  } else {
-    notifier.state = {...current, reportId};
-  }
+  final repo = ref.read(reportRepositoryProvider);
+  repo.toggleUpvote(reportId).then((upvoted) {
+    final notifier = ref.read(upvotedReportsProvider.notifier);
+    final current = notifier.state;
+    if (upvoted) {
+      notifier.state = {...current, reportId};
+    } else {
+      notifier.state = {...current}..remove(reportId);
+    }
+    ref.invalidate(feedReportsProvider);
+  }).catchError((e) {
+    debugPrint('toggleUpvote failed: $e');
+  });
 }
 
-/// Comments for a given report, fetched with simulated network delay.
+/// Comments for a given report, fetched from the REST API.
 final commentsProvider =
     FutureProvider.autoDispose.family<List<Comment>, String>((ref, reportId) {
-  return MockDataService.instance.getCommentsAsync(reportId);
+  final repo = ref.watch(commentRepositoryProvider);
+  return repo.getComments(reportId);
 });
 
 /// Tracks which comments the user has upvoted (local state).
@@ -73,21 +98,23 @@ void toggleCommentUpvote(WidgetRef ref, String commentId) {
 
 /// Provider for reports near a specific location, filtered by crime type.
 /// Used by LocationFeedScreen when tapping a map marker.
-final locationFeedReportsProvider = Provider.family<List<Report>, Report>((
-  ref,
-  initialReport,
-) {
+///
+/// Changed from sync [Provider.family] to [FutureProvider.family] to use
+/// the REST API for fetching nearby reports.
+final locationFeedReportsProvider =
+    FutureProvider.family<List<Report>, Report>((ref, initialReport) async {
   final activeFilters = ref.watch(crimeTypeFiltersProvider);
-  final nearby = MockDataService.instance.getNearbyReports(
-    initialReport.latitude,
-    initialReport.longitude,
-    AppConstants.locationFeedRadiusKm,
+  final repo = ref.watch(reportRepositoryProvider);
+
+  final nearby = await repo.getNearbyReports(
+    lat: initialReport.latitude,
+    lng: initialReport.longitude,
+    radius: (AppConstants.locationFeedRadiusKm * 1000).round(),
   );
 
-  final filtered = nearby.where((r) => activeFilters.contains(r.type)).toList();
+  final filtered =
+      nearby.where((r) => activeFilters.contains(r.type)).toList();
 
-  // Ensure the tapped report is first (even if its type is filtered out,
-  // keep it since user explicitly tapped this marker)
   final reordered = filtered.where((r) => r.id != initialReport.id).toList();
   if (activeFilters.contains(initialReport.type)) {
     reordered.insert(0, initialReport);

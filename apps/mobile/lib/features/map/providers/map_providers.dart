@@ -3,7 +3,7 @@ import 'package:geolocator/geolocator.dart';
 
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/core/constants/enums.dart';
-import 'package:crimereport/shared/data/mock_data_service.dart';
+import 'package:crimereport/features/feed/data/repositories/report_repository.dart';
 import 'package:crimereport/features/feed/data/models/report.dart';
 import 'package:crimereport/features/settings/providers/settings_providers.dart';
 
@@ -21,9 +21,6 @@ final locationPermissionProvider =
 ///
 /// Abstracts Geolocator calls for testability and reuse.
 class LocationService {
-  /// Check and request location permissions.
-  ///
-  /// Returns the current permission status after requesting if needed.
   Future<LocationPermission> checkPermission() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
@@ -38,9 +35,6 @@ class LocationService {
     return permission;
   }
 
-  /// Get current position with timeout.
-  ///
-  /// Returns null if location cannot be determined.
   Future<Position?> getCurrentPosition() async {
     try {
       return await Geolocator.getCurrentPosition(
@@ -51,9 +45,6 @@ class LocationService {
     }
   }
 
-  /// Stream of position updates.
-  ///
-  /// Updates when user moves [AppConstants.locationDistanceFilter] meters.
   Stream<Position> getPositionStream() {
     return Geolocator.getPositionStream(
       locationSettings: LocationSettings(
@@ -63,7 +54,6 @@ class LocationService {
     );
   }
 
-  /// Open device location settings.
   Future<bool> openSettings() async {
     return await Geolocator.openLocationSettings();
   }
@@ -73,11 +63,21 @@ class LocationService {
 final locationServiceProvider =
     Provider<LocationService>((ref) => LocationService());
 
-/// Map reports filtered by active crime type filters.
-/// Rebuilds when filters change so the map can update its GeoJSON source.
-final mapReportsProvider = Provider<List<Report>>((ref) {
+/// Map reports fetched from the REST API and filtered by active crime type
+/// filters. Rebuilds when filters or location change.
+final mapReportsProvider = FutureProvider<List<Report>>((ref) async {
   final activeFilters = ref.watch(crimeTypeFiltersProvider);
-  final allReports = MockDataService.instance.getReports();
+  final position = ref.watch(userLocationProvider);
+
+  if (position == null) return [];
+
+  final repo = ref.watch(reportRepositoryProvider);
+  final allReports = await repo.getNearbyReports(
+    lat: position.latitude,
+    lng: position.longitude,
+    radius: AppConstants.defaultRadiusMeters,
+  );
+
   if (activeFilters.length == ReportType.values.length) return allReports;
   return allReports.where((r) => activeFilters.contains(r.type)).toList();
 });

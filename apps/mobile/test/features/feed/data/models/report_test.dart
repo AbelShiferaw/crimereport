@@ -40,7 +40,7 @@ void main() {
       upvotes: 42,
       commentCount: 10,
       createdAt: now,
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
       distanceKm: distanceKm,
     );
   }
@@ -148,7 +148,7 @@ void main() {
         expect(json['address'], '123 Test St');
         expect(json['upvotes'], 42);
         expect(json['comment_count'], 10);
-        expect(json['status'], 'verified');
+        expect(json['status'], 'active');
         expect(json['media'], isList);
         expect(json['created_at'], isA<String>());
       });
