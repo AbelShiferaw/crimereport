@@ -11,12 +11,7 @@ import 'package:crimereport/features/feed/providers/feed_providers.dart';
 import 'package:crimereport/shared/widgets/loading_placeholder.dart';
 import 'package:crimereport/shared/widgets/api_error_handler.dart';
 
-/// Location-filtered feed screen with glass UI.
-///
-/// Opens when user taps a marker on the map.
-/// Shows reports near the tapped location with the tapped report first.
 class LocationFeedScreen extends ConsumerStatefulWidget {
-  /// The report that was tapped on the map.
   final Report initialReport;
 
   const LocationFeedScreen({super.key, required this.initialReport});
@@ -163,10 +158,8 @@ class _LocationFeedScreenState extends ConsumerState<LocationFeedScreen>
   }
 }
 
-/// Glass-style close button with blur effect.
 class _GlassCloseButton extends StatelessWidget {
   final VoidCallback onPressed;
-
   const _GlassCloseButton({required this.onPressed});
 
   @override
@@ -180,18 +173,11 @@ class _GlassCloseButton extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-            color: AppColors.glassBackground,
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: AppColors.glassBorderLight,
-                width: 0.5,
-              ),
+              color: AppColors.glassBackground,
+              shape: BoxShape.circle,
+              border: Border.all(color: AppColors.glassBorderLight, width: 0.5),
             ),
-            child: const Icon(
-              Icons.close_rounded,
-              color: Colors.white,
-              size: 24,
-            ),
+            child: const Icon(Icons.close_rounded, color: Colors.white, size: 24),
           ),
         ),
       ),
@@ -199,10 +185,8 @@ class _GlassCloseButton extends StatelessWidget {
   }
 }
 
-/// Glass-style badge showing number of nearby reports.
 class _GlassLocationBadge extends StatelessWidget {
   final int reportCount;
-
   const _GlassLocationBadge({required this.reportCount});
 
   @override
@@ -219,19 +203,12 @@ class _GlassLocationBadge extends StatelessWidget {
           decoration: BoxDecoration(
             color: AppColors.glassBackground,
             borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
-            border: Border.all(
-              color: AppColors.glassBorderLight,
-              width: 0.5,
-            ),
+            border: Border.all(color: AppColors.glassBorderLight, width: 0.5),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(
-                Icons.location_on_rounded,
-                color: Colors.white,
-                size: 16,
-              ),
+              const Icon(Icons.location_on_rounded, color: Colors.white, size: 16),
               const SizedBox(width: AppSpacing.xs),
               Text(
                 '$reportCount nearby',

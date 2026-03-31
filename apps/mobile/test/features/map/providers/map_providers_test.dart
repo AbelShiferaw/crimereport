@@ -6,25 +6,6 @@ import 'package:crimereport/features/map/providers/map_providers.dart';
 import 'package:crimereport/features/settings/providers/settings_providers.dart';
 
 void main() {
-  group('mapReportsProvider', () {
-    test('returns empty list when user location is null', () async {
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-
-      final reports = await container.read(mapReportsProvider.future);
-      expect(reports, isEmpty);
-    });
-
-    test('returns empty when no filters are active and location is null', () async {
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-
-      container.read(crimeTypeFiltersProvider.notifier).state = <ReportType>{};
-      final reports = await container.read(mapReportsProvider.future);
-      expect(reports, isEmpty);
-    });
-  });
-
   group('location providers', () {
     test('userLocationProvider defaults to null', () {
       final container = ProviderContainer();
@@ -42,6 +23,25 @@ void main() {
       final container = ProviderContainer();
       addTearDown(container.dispose);
       expect(container.read(locationPermissionProvider), isNull);
+    });
+  });
+
+  group('mapReportsProvider', () {
+    test('returns empty list when user location is null', () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      final reports = await container.read(mapReportsProvider.future);
+      expect(reports, isEmpty);
+    });
+
+    test('returns empty when no filters are active and location is null', () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      container.read(crimeTypeFiltersProvider.notifier).state = <ReportType>{};
+      final reports = await container.read(mapReportsProvider.future);
+      expect(reports, isEmpty);
     });
   });
 }

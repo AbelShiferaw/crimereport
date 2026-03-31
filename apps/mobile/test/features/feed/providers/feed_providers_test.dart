@@ -5,14 +5,11 @@ import 'package:crimereport/features/feed/providers/feed_providers.dart';
 
 void main() {
   group('upvote helpers', () {
-    test('toggleUpvote adds and removes report ids', () {
+    test('upvotedReportsProvider adds and removes report ids', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
 
-      // Use a ConsumerReader wrapper since toggleUpvote expects WidgetRef.
-      // We'll test the provider directly instead.
       final notifier = container.read(upvotedReportsProvider.notifier);
-
       expect(container.read(upvotedReportsProvider), isEmpty);
 
       notifier.state = {...notifier.state, 'r1'};
@@ -23,12 +20,11 @@ void main() {
       expect(container.read(upvotedReportsProvider).contains('r1'), isFalse);
     });
 
-    test('toggleCommentUpvote adds and removes comment ids', () {
+    test('upvotedCommentsProvider adds and removes comment ids', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
 
       final notifier = container.read(upvotedCommentsProvider.notifier);
-
       expect(container.read(upvotedCommentsProvider), isEmpty);
 
       notifier.state = {...notifier.state, 'c1'};
@@ -37,6 +33,25 @@ void main() {
       final updated = {...notifier.state}..remove('c1');
       notifier.state = updated;
       expect(container.read(upvotedCommentsProvider).contains('c1'), isFalse);
+    });
+  });
+
+  group('tab state providers', () {
+    test('appTabIndexProvider defaults to 0', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      expect(container.read(appTabIndexProvider), 0);
+    });
+
+    test('isFeedTabActiveProvider reflects tab index', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      expect(container.read(isFeedTabActiveProvider), isTrue);
+      container.read(appTabIndexProvider.notifier).state = 1;
+      expect(container.read(isFeedTabActiveProvider), isFalse);
+      container.read(appTabIndexProvider.notifier).state = 0;
+      expect(container.read(isFeedTabActiveProvider), isTrue);
     });
   });
 }

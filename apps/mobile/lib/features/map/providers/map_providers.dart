@@ -21,9 +21,6 @@ final locationPermissionProvider =
 ///
 /// Abstracts Geolocator calls for testability and reuse.
 class LocationService {
-  /// Check and request location permissions.
-  ///
-  /// Returns the current permission status after requesting if needed.
   Future<LocationPermission> checkPermission() async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
@@ -38,9 +35,6 @@ class LocationService {
     return permission;
   }
 
-  /// Get current position with timeout.
-  ///
-  /// Returns null if location cannot be determined.
   Future<Position?> getCurrentPosition() async {
     try {
       return await Geolocator.getCurrentPosition(
@@ -51,9 +45,6 @@ class LocationService {
     }
   }
 
-  /// Stream of position updates.
-  ///
-  /// Updates when user moves [AppConstants.locationDistanceFilter] meters.
   Stream<Position> getPositionStream() {
     return Geolocator.getPositionStream(
       locationSettings: LocationSettings(
@@ -63,7 +54,6 @@ class LocationService {
     );
   }
 
-  /// Open device location settings.
   Future<bool> openSettings() async {
     return await Geolocator.openLocationSettings();
   }

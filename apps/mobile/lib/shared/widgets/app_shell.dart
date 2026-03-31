@@ -6,6 +6,7 @@ import 'package:crimereport/features/feed/providers/feed_providers.dart';
 import 'package:crimereport/features/map/presentation/map_screen.dart';
 import 'package:crimereport/features/submit/presentation/submit_screen.dart';
 import 'package:crimereport/features/settings/presentation/settings_screen.dart';
+import 'package:crimereport/shared/data/websocket/ws_lifecycle_manager.dart';
 import 'package:crimereport/shared/widgets/floating_nav_bar.dart';
 
 class AppShell extends ConsumerStatefulWidget {
@@ -24,50 +25,27 @@ class _AppShellState extends ConsumerState<AppShell> {
   ];
 
   static const List<FloatingNavBarItem> _navItems = [
-    FloatingNavBarItem(
-      icon: Icons.home_outlined,
-      activeIcon: Icons.home,
-      label: 'Feed',
-    ),
-    FloatingNavBarItem(
-      icon: Icons.map_outlined,
-      activeIcon: Icons.map,
-      label: 'Map',
-    ),
-    FloatingNavBarItem(
-      icon: Icons.add_circle_outline,
-      activeIcon: Icons.add_circle,
-      label: 'Report',
-    ),
-    FloatingNavBarItem(
-      icon: Icons.settings_outlined,
-      activeIcon: Icons.settings,
-      label: 'Settings',
-    ),
+    FloatingNavBarItem(icon: Icons.home_outlined, activeIcon: Icons.home, label: 'Feed'),
+    FloatingNavBarItem(icon: Icons.map_outlined, activeIcon: Icons.map, label: 'Map'),
+    FloatingNavBarItem(icon: Icons.add_circle_outline, activeIcon: Icons.add_circle, label: 'Report'),
+    FloatingNavBarItem(icon: Icons.settings_outlined, activeIcon: Icons.settings, label: 'Settings'),
   ];
 
   void _onTabChanged(int index) {
-    // Update the provider so other widgets (like FeedVideoItem) know
     ref.read(appTabIndexProvider.notifier).state = index;
   }
 
   @override
   Widget build(BuildContext context) {
+    ref.watch(wsLifecycleProvider);
     final currentIndex = ref.watch(appTabIndexProvider);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          // Screen content
           IndexedStack(index: currentIndex, children: _screens),
-
-          // Floating nav bar
-          FloatingNavBar(
-            currentIndex: currentIndex,
-            onTap: _onTabChanged,
-            items: _navItems,
-          ),
+          FloatingNavBar(currentIndex: currentIndex, onTap: _onTabChanged, items: _navItems),
         ],
       ),
     );

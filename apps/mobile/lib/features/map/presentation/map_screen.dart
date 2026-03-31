@@ -17,10 +17,6 @@ import 'package:crimereport/features/map/presentation/map_constants.dart';
 import 'package:crimereport/features/map/presentation/map_focus_pulse.dart';
 import 'package:crimereport/features/map/presentation/map_marker_manager.dart';
 
-/// Interactive Mapbox map screen with clustering and focus highlight.
-///
-/// Delegates marker management to [MapMarkerManager] and pulse animation
-/// to [MapFocusPulse] to keep this widget focused on lifecycle and UI.
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
 
@@ -57,10 +53,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       MapboxOptions.setAccessToken(mapboxToken);
     }
   }
-
-  // ----------------------------------------------------------
-  // Location
-  // ----------------------------------------------------------
 
   Future<void> _initLocation() async {
     final locationService = ref.read(locationServiceProvider);
@@ -103,10 +95,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  // ----------------------------------------------------------
-  // Map callbacks
-  // ----------------------------------------------------------
-
   void _onMapCreated(MapboxMap mapboxMap) async {
     _mapboxMap = mapboxMap;
     _markerManager = MapMarkerManager(mapboxMap);
@@ -132,10 +120,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     _focusPulse?.onCameraChanged(data);
   }
 
-  // ----------------------------------------------------------
-  // Tap interactions
-  // ----------------------------------------------------------
-
   void _setupTapInteractions() {
     if (_mapboxMap == null) return;
 
@@ -160,7 +144,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           final report = _reports.firstWhere((r) => r.id == reportId);
           _onMarkerTapped(report);
         } on StateError {
-          // Report not in list (e.g. filtered out)
+          // Report not in list
         }
       },
     );
@@ -229,10 +213,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     );
   }
 
-  // ----------------------------------------------------------
-  // Location puck
-  // ----------------------------------------------------------
-
   Future<void> _setupLocationPuck() async {
     if (_mapboxMap == null) return;
 
@@ -250,10 +230,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       ),
     );
   }
-
-  // ----------------------------------------------------------
-  // Build
-  // ----------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
