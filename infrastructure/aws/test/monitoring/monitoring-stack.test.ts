@@ -139,4 +139,33 @@ describe('MonitoringStack', () => {
   test('creates exactly one dashboard', () => {
     template.resourceCountIs('AWS::CloudWatch::Dashboard', 1);
   });
+
+  // ── SNS Alarm Topic ─────────────────────────────────────
+
+  test('creates SNS alarm topic with correct name', () => {
+    template.hasResourceProperties('AWS::SNS::Topic', {
+      TopicName: 'crimereport-alarms',
+    });
+  });
+
+  test('creates email subscription for alarm topic', () => {
+    template.hasResourceProperties('AWS::SNS::Subscription', {
+      Protocol: 'email',
+      Endpoint: 'ops@reportcrime.app',
+    });
+  });
+
+  test('all alarms have alarm actions configured', () => {
+    const alarms = template.findResources('AWS::CloudWatch::Alarm');
+    const alarmIds = Object.keys(alarms);
+    expect(alarmIds).toHaveLength(10);
+
+    for (const id of alarmIds) {
+      const alarm = alarms[id];
+      expect(alarm.Properties.AlarmActions).toBeDefined();
+      expect(alarm.Properties.AlarmActions).toHaveLength(1);
+      expect(alarm.Properties.OKActions).toBeDefined();
+      expect(alarm.Properties.OKActions).toHaveLength(1);
+    }
+  });
 });

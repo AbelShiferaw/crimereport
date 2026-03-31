@@ -222,14 +222,27 @@ class _CommentsSheetState extends ConsumerState<CommentsSheet> {
             GestureDetector(
               onTap: _isSending ? null : _submitComment,
               child: Container(
-                width: 40, height: 40,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  color: _isSending ? AppColors.primary.withAlpha(128) : AppColors.primary,
+                  color: _isSending
+                      ? AppColors.primary.withAlpha(128)
+                      : AppColors.primary,
                   shape: BoxShape.circle,
                 ),
                 child: _isSending
-                    ? const Padding(padding: EdgeInsets.all(10), child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.arrow_upward_rounded, color: Colors.white, size: 20),
+                    ? const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.arrow_upward_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
               ),
             ),
           ],

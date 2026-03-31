@@ -64,7 +64,8 @@ final locationServiceProvider =
     Provider<LocationService>((ref) => LocationService());
 
 /// Map reports fetched from the REST API and filtered by active crime type
-/// filters. Rebuilds when filters or location change.
+/// filters. Rebuilds when filters or location change so the map can update
+/// its GeoJSON source.
 final mapReportsProvider = FutureProvider<List<Report>>((ref) async {
   final activeFilters = ref.watch(crimeTypeFiltersProvider);
   final position = ref.watch(userLocationProvider);

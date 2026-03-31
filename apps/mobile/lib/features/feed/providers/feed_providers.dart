@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:crimereport/core/constants/app_constants.dart';
@@ -57,22 +56,19 @@ final videoPreloadManagerProvider = Provider<VideoPreloadManager>((ref) {
 final upvotedReportsProvider = StateProvider<Set<String>>((ref) => {});
 
 /// Toggle upvote via the REST API, then update local state.
-///
-/// Safe to call fire-and-forget — errors are caught and logged.
-void toggleUpvote(WidgetRef ref, String reportId) {
+Future<void> toggleUpvote(WidgetRef ref, String reportId) async {
   final repo = ref.read(reportRepositoryProvider);
-  repo.toggleUpvote(reportId).then((upvoted) {
-    final notifier = ref.read(upvotedReportsProvider.notifier);
-    final current = notifier.state;
-    if (upvoted) {
-      notifier.state = {...current, reportId};
-    } else {
-      notifier.state = {...current}..remove(reportId);
-    }
-    ref.invalidate(feedReportsProvider);
-  }).catchError((e) {
-    debugPrint('toggleUpvote failed: $e');
-  });
+  final upvoted = await repo.toggleUpvote(reportId);
+
+  final notifier = ref.read(upvotedReportsProvider.notifier);
+  final current = notifier.state;
+  if (upvoted) {
+    notifier.state = {...current, reportId};
+  } else {
+    notifier.state = {...current}..remove(reportId);
+  }
+
+  ref.invalidate(feedReportsProvider);
 }
 
 /// Comments for a given report, fetched from the REST API.

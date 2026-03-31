@@ -134,6 +134,7 @@ class _LocationFeedScreenState extends ConsumerState<LocationFeedScreen>
                   },
                 ),
 
+              // Header overlay
               Positioned(
                 top: topPadding + AppSpacing.sm,
                 left: AppSpacing.md,

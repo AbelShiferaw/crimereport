@@ -238,6 +238,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final userPosition = ref.watch(userLocationProvider);
     final mapReportsAsync = ref.watch(mapReportsProvider);
 
+    // When map reports resolve, update our local list and refresh markers.
     ref.listen(mapReportsProvider, (previous, next) {
       next.whenData((reports) {
         _reports = reports;
@@ -252,6 +253,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       });
     });
 
+    // Seed _reports from the current value on first build.
     mapReportsAsync.whenData((reports) {
       if (_reports.isEmpty && reports.isNotEmpty) {
         _reports = reports;

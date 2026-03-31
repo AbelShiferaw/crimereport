@@ -109,8 +109,10 @@ Full endpoint documentation: [backend/api/README.md](backend/api/README.md)
 | C: Backend API (cont.) | 23 | Completed |
 | C: Backend API (cont.) | 24 | Completed |
 | C.5: CI/CD | 24.5 | Completed |
-| D: Integration | 25-28 | Not started |
-| E: Testing & Launch | 29-31 | Not started |
+| D: Integration | 25-28 | In Progress |
+| E: Testing & Launch | 29 | In Progress |
+| E: Testing & Launch | 30 | In Progress (infra + docs) |
+| E: Testing & Launch | 31 | Not started |
 
 See [docs/design/](docs/design/) for detailed milestone plans.
 

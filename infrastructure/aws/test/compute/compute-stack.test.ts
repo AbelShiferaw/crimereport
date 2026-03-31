@@ -163,6 +163,21 @@ describe('ComputeStack', () => {
     });
   });
 
+  test('container has production environment variables', () => {
+    template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+      ContainerDefinitions: Match.arrayWith([
+        Match.objectLike({
+          Environment: Match.arrayWith([
+            Match.objectLike({ Name: 'LOG_LEVEL', Value: 'info' }),
+            Match.objectLike({ Name: 'CORS_ORIGIN', Value: 'https://reportcrime.app' }),
+            Match.objectLike({ Name: 'WS_PING_INTERVAL', Value: '25000' }),
+            Match.objectLike({ Name: 'WS_PING_TIMEOUT', Value: '5000' }),
+          ]),
+        }),
+      ]),
+    });
+  });
+
   test('container has database secret injected', () => {
     template.hasResourceProperties('AWS::ECS::TaskDefinition', {
       ContainerDefinitions: Match.arrayWith([
