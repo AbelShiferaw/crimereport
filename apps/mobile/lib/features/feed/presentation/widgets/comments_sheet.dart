@@ -58,9 +58,9 @@ class _CommentsSheetState extends ConsumerState<CommentsSheet> {
 
     ref.listen(commentsProvider(widget.reportId), (previous, next) {
       next.whenData((comments) {
-        final notifier = ref.read(realtimeCommentsProvider(widget.reportId).notifier);
-        if (notifier.state.isEmpty && comments.isNotEmpty) {
-          notifier.seed(comments);
+        final current = ref.read(realtimeCommentsProvider(widget.reportId));
+        if (current.isEmpty && comments.isNotEmpty) {
+          ref.read(realtimeCommentsProvider(widget.reportId).notifier).seed(comments);
         }
       });
     });

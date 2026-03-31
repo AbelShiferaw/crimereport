@@ -61,9 +61,9 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
     ref.listen(feedReportsProvider, (previous, next) {
       next.whenData((reports) {
-        final notifier = ref.read(realtimeFeedProvider.notifier);
-        if (notifier.state.isEmpty && reports.isNotEmpty) {
-          notifier.seed(reports);
+        final current = ref.read(realtimeFeedProvider);
+        if (current.isEmpty && reports.isNotEmpty) {
+          ref.read(realtimeFeedProvider.notifier).seed(reports);
         }
       });
     });

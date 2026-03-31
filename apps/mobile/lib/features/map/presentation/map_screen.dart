@@ -11,7 +11,6 @@ import 'package:crimereport/core/theme/theme.dart';
 import 'package:crimereport/shared/widgets/loading_placeholder.dart';
 import 'package:crimereport/shared/widgets/permission_placeholder.dart';
 import 'package:crimereport/features/feed/data/models/report.dart';
-import 'package:crimereport/features/feed/providers/feed_providers.dart';
 import 'package:crimereport/features/map/providers/map_providers.dart';
 import 'package:crimereport/features/map/presentation/location_feed_screen.dart';
 import 'package:crimereport/features/map/presentation/map_constants.dart';
