@@ -150,3 +150,157 @@ describe('DELETE /notifications/unregister — extended', () => {
     expect(mockSns.deleteEndpoint).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /notifications/register — extended', () => {
+  it('registers an iOS device', async () => {
+    mockSns.createEndpoint.mockResolvedValueOnce('arn:ios-endpoint');
+    mockPush.upsert.mockResolvedValueOnce({
+      ...fakeSubscription,
+      platform: 'ios' as const,
+      endpoint_arn: 'arn:ios-endpoint',
+    });
+
+    const res = await request(app).post(`${BASE}/register`).send({
+      device_id: 'ios-dev-1',
+      fcm_token: 'ios-token-abc',
+      platform: 'ios',
+      lat: 37.78,
+      lng: -122.41,
+    });
+
+    expect(res.status).toBe(201);
+    expect(mockSns.createEndpoint).toHaveBeenCalledWith('ios', 'ios-token-abc', 'ios-dev-1');
+  });
+
+  it('returns 400 for invalid lng', async () => {
+    const res = await request(app).post(`${BASE}/register`).send({
+      device_id: 'dev-1',
+      fcm_token: 'tok',
+      platform: 'android',
+      lat: 40.71,
+      lng: 999,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for invalid platform', async () => {
+    const res = await request(app).post(`${BASE}/register`).send({
+      device_id: 'dev-1',
+      fcm_token: 'tok',
+      platform: 'windows',
+      lat: 40.71,
+      lng: -74.0,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for empty device_id', async () => {
+    const res = await request(app).post(`${BASE}/register`).send({
+      device_id: '',
+      fcm_token: 'tok',
+      platform: 'android',
+      lat: 40.71,
+      lng: -74.0,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for empty fcm_token', async () => {
+    const res = await request(app).post(`${BASE}/register`).send({
+      device_id: 'dev-1',
+      fcm_token: '',
+      platform: 'android',
+      lat: 40.71,
+      lng: -74.0,
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('PUT /notifications/preferences — types array', () => {
+  it('updates preferences with types array', async () => {
+    mockPush.updatePreferences.mockResolvedValueOnce({
+      ...fakeSubscription,
+      types: ['theft', 'assault'],
+    });
+
+    const res = await request(app).put(`${BASE}/preferences`).send({
+      device_id: 'dev-1',
+      types: ['theft', 'assault'],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.types).toEqual(['theft', 'assault']);
+  });
+
+  it('updates preferences with enabled only', async () => {
+    mockPush.updatePreferences.mockResolvedValueOnce({
+      ...fakeSubscription,
+      enabled: false,
+    });
+
+    const res = await request(app).put(`${BASE}/preferences`).send({
+      device_id: 'dev-1',
+      enabled: false,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.enabled).toBe(false);
+  });
+
+  it('updates all optional fields together', async () => {
+    mockPush.updatePreferences.mockResolvedValueOnce({
+      ...fakeSubscription,
+      enabled: true,
+      radius: 25000,
+      types: ['robbery', 'vandalism'],
+    });
+
+    const res = await request(app).put(`${BASE}/preferences`).send({
+      device_id: 'dev-1',
+      enabled: true,
+      radius: 25000,
+      types: ['robbery', 'vandalism'],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.radius).toBe(25000);
+    expect(res.body.types).toEqual(['robbery', 'vandalism']);
+  });
+});
+
+describe('notification validation edge cases', () => {
+  it('register returns 400 for invalid types in preferences', async () => {
+    const result = (await import('../../validators/push-subscription')).updatePreferencesSchema.safeParse({
+      device_id: 'dev-1',
+      types: ['invalid_crime'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('register returns 400 for radius below minimum via schema', async () => {
+    const result = (await import('../../validators/push-subscription')).updatePreferencesSchema.safeParse({
+      device_id: 'dev-1',
+      radius: 999,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('register returns 400 for radius above maximum via schema', async () => {
+    const result = (await import('../../validators/push-subscription')).updatePreferencesSchema.safeParse({
+      device_id: 'dev-1',
+      radius: 50001,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('unregister rejects missing device_id via schema', async () => {
+    const result = (await import('../../validators/push-subscription')).unregisterDeviceSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('unregister rejects empty device_id via schema', async () => {
+    const result = (await import('../../validators/push-subscription')).unregisterDeviceSchema.safeParse({ device_id: '' });
+    expect(result.success).toBe(false);
+  });
+});
