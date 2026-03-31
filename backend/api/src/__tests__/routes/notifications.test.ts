@@ -133,3 +133,20 @@ describe('PUT /notifications/preferences', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('PUT /notifications/preferences — extended', () => {
+  it('returns 404 for non-existent device', async () => {
+    mockPush.updatePreferences.mockResolvedValueOnce(null);
+    const res = await request(app).put(`${BASE}/preferences`).send({ device_id: 'non-existent-device', enabled: true });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('DELETE /notifications/unregister — extended', () => {
+  it('succeeds gracefully for non-existent device', async () => {
+    mockPush.remove.mockResolvedValueOnce(null);
+    const res = await request(app).delete(`${BASE}/unregister`).send({ device_id: 'non-existent-device' });
+    expect(res.status).toBe(200);
+    expect(mockSns.deleteEndpoint).not.toHaveBeenCalled();
+  });
+});
