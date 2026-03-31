@@ -2,9 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:path/path.dart' as p;
 
 import 'package:crimereport/core/constants/app_constants.dart';
 import 'package:crimereport/shared/data/api/api_client.dart';
@@ -80,7 +78,7 @@ class UploadService {
     required String fileType,
     required String contentType,
   }) async {
-    final response = await _apiClient.dio.post(
+    final response = await _apiClient.post(
       '/api/v1/reports/$reportId/upload',
       data: {
         'file_type': fileType,
@@ -120,7 +118,7 @@ class UploadService {
     required String reportId,
     required String mediaKey,
   }) async {
-    final response = await _apiClient.dio.post(
+    final response = await _apiClient.post(
       '/api/v1/reports/$reportId/upload/complete',
       data: {'media_key': mediaKey},
     );
@@ -135,7 +133,7 @@ class UploadService {
     const maxAttempts = 60;
 
     for (var i = 0; i < maxAttempts; i++) {
-      final response = await _apiClient.dio.get(
+      final response = await _apiClient.get(
         '/api/v1/reports/$reportId/media/status',
       );
       final result =
@@ -150,7 +148,8 @@ class UploadService {
   // ---- Static helpers ----
 
   static String contentTypeFor(String filePath) {
-    final ext = p.extension(filePath).toLowerCase();
+    final dotIndex = filePath.lastIndexOf('.');
+    final ext = dotIndex != -1 ? filePath.substring(dotIndex).toLowerCase() : '';
     return switch (ext) {
       '.jpg' || '.jpeg' => 'image/jpeg',
       '.png' => 'image/png',

@@ -49,7 +49,7 @@ void main() {
 
   group('ReportStatus', () {
     test('has correct number of values', () {
-      expect(ReportStatus.values.length, 4);
+      expect(ReportStatus.values.length, 7);
     });
 
     test('each value has a non-empty displayName', () {
@@ -60,7 +60,10 @@ void main() {
 
     test('specific displayName values', () {
       expect(ReportStatus.pending.displayName, 'Pending Review');
-      expect(ReportStatus.verified.displayName, 'Verified');
+      expect(ReportStatus.uploading.displayName, 'Uploading');
+      expect(ReportStatus.processing.displayName, 'Processing');
+      expect(ReportStatus.active.displayName, 'Active');
+      expect(ReportStatus.failed.displayName, 'Failed');
       expect(ReportStatus.flagged.displayName, 'Flagged');
       expect(ReportStatus.removed.displayName, 'Removed');
     });

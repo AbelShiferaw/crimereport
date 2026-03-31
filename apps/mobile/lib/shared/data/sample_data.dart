@@ -65,7 +65,7 @@ class SampleData {
       upvotes: 45,
       commentCount: 12,
       createdAt: now.subtract(const Duration(hours: 2)),
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
     ),
 
     // Report 2: Assault - Tenderloin
@@ -94,7 +94,7 @@ class SampleData {
       upvotes: 89,
       commentCount: 34,
       createdAt: now.subtract(const Duration(hours: 4)),
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
     ),
 
     // Report 3: Vandalism - Mission District
@@ -152,7 +152,7 @@ class SampleData {
       upvotes: 67,
       commentCount: 19,
       createdAt: now.subtract(const Duration(hours: 1)),
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
     ),
 
     // Report 5: Drug Activity - Civic Center
@@ -181,7 +181,7 @@ class SampleData {
       upvotes: 112,
       commentCount: 45,
       createdAt: now.subtract(const Duration(hours: 6)),
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
     ),
 
     // Report 6: Disturbance - North Beach
@@ -239,7 +239,7 @@ class SampleData {
       upvotes: 78,
       commentCount: 23,
       createdAt: now.subtract(const Duration(minutes: 45)),
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
     ),
 
     // Report 8: Other - SoMa
@@ -268,7 +268,7 @@ class SampleData {
       upvotes: 156,
       commentCount: 67,
       createdAt: now.subtract(const Duration(days: 1)),
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
     ),
 
     // Report 9: Assault - Haight-Ashbury
@@ -297,7 +297,7 @@ class SampleData {
       upvotes: 201,
       commentCount: 89,
       createdAt: now.subtract(const Duration(hours: 3)),
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
     ),
 
     // Report 10: Vandalism - Castro
@@ -326,7 +326,7 @@ class SampleData {
       upvotes: 134,
       commentCount: 41,
       createdAt: now.subtract(const Duration(hours: 5)),
-      status: ReportStatus.verified,
+      status: ReportStatus.active,
     ),
   ];
 

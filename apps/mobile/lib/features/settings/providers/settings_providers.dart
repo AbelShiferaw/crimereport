@@ -41,7 +41,7 @@ Future<void> setPushNotificationsEnabled(WidgetRef ref, bool enabled) async {
   if (!enabled) {
     try {
       final apiClient = ref.read(apiClientProvider);
-      await apiClient.dio.delete('/api/v1/notifications/unregister');
+      await apiClient.delete('/api/v1/notifications/unregister');
     } catch (e) {
       debugPrint('Failed to unregister notifications: $e');
     }
@@ -69,7 +69,7 @@ Future<void> setNotificationRadius(WidgetRef ref, double radiusKm) async {
     if (token == null) return;
 
     final apiClient = ref.read(apiClientProvider);
-    await apiClient.dio.post(
+    await apiClient.post(
       '/api/v1/notifications/register',
       data: {
         'fcm_token': token,

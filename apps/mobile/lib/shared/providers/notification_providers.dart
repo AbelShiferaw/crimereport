@@ -52,7 +52,7 @@ Future<void> _registerToken(Ref ref, String token) async {
     final apiClient = ref.read(apiClientProvider);
     final radius = ref.read(notificationRadiusProvider);
 
-    await apiClient.dio.post(
+    await apiClient.post(
       '/api/v1/notifications/register',
       data: {
         'fcm_token': token,

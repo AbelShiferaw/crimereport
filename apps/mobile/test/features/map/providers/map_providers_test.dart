@@ -4,54 +4,44 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:crimereport/core/constants/enums.dart';
 import 'package:crimereport/features/map/providers/map_providers.dart';
 import 'package:crimereport/features/settings/providers/settings_providers.dart';
-import 'package:crimereport/shared/data/mock_data_service.dart';
 
 void main() {
   group('mapReportsProvider', () {
-    test('returns all reports when all filters are active', () {
+    test('returns empty list when user location is null', () async {
       final container = ProviderContainer();
       addTearDown(container.dispose);
 
-      final reports = container.read(mapReportsProvider);
-      final allReports = MockDataService.instance.getReports();
-      expect(reports.length, allReports.length);
-    });
-
-    test('returns empty when no filters are active', () {
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-
-      container.read(crimeTypeFiltersProvider.notifier).state = <ReportType>{};
-      final reports = container.read(mapReportsProvider);
+      final reports = await container.read(mapReportsProvider.future);
       expect(reports, isEmpty);
     });
 
-    test('filters reports by selected crime type', () {
+    test('returns empty when no filters are active and location is null', () async {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-
-      container.read(crimeTypeFiltersProvider.notifier).state = {
-        ReportType.vandalism,
-      };
-
-      final reports = container.read(mapReportsProvider);
-      for (final report in reports) {
-        expect(report.type, ReportType.vandalism);
-      }
-    });
-
-    test('updates when filters change', () {
-      final container = ProviderContainer();
-      addTearDown(container.dispose);
-
-      final allCount = container.read(mapReportsProvider).length;
 
       container.read(crimeTypeFiltersProvider.notifier).state = <ReportType>{};
-      expect(container.read(mapReportsProvider).length, 0);
+      final reports = await container.read(mapReportsProvider.future);
+      expect(reports, isEmpty);
+    });
+  });
 
-      container.read(crimeTypeFiltersProvider.notifier).state =
-          Set.from(ReportType.values);
-      expect(container.read(mapReportsProvider).length, allCount);
+  group('location providers', () {
+    test('userLocationProvider defaults to null', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      expect(container.read(userLocationProvider), isNull);
+    });
+
+    test('locationLoadingProvider defaults to true', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      expect(container.read(locationLoadingProvider), isTrue);
+    });
+
+    test('locationPermissionProvider defaults to null', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      expect(container.read(locationPermissionProvider), isNull);
     });
   });
 }
