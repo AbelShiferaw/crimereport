@@ -3,10 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:crimereport/core/theme/theme.dart';
+import 'package:crimereport/features/splash/presentation/splash_screen.dart';
 import 'package:crimereport/shared/providers/notification_providers.dart';
 import 'package:crimereport/shared/services/deep_link_handler.dart';
-import 'package:crimereport/shared/widgets/app_shell.dart';
-import 'package:crimereport/shared/widgets/foreground_notification_banner.dart';
 
 class CrimeReportApp extends ConsumerWidget {
   const CrimeReportApp({super.key});
@@ -32,9 +31,7 @@ class CrimeReportApp extends ConsumerWidget {
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       navigatorKey: navigatorKey,
-      home: const ForegroundNotificationBanner(
-        child: AppShell(),
-      ),
+      home: const SplashScreen(),
     );
   }
 }
