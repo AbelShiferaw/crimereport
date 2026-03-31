@@ -49,7 +49,7 @@ void main() {
 
   group('ReportStatus', () {
     test('has correct number of values', () {
-      expect(ReportStatus.values.length, 4);
+      expect(ReportStatus.values.length, 7);
     });
 
     test('each value has a non-empty displayName', () {
