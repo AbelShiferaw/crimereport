@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -67,14 +66,14 @@ const _pages = [
 ///
 /// On completion the `onboarding_complete` flag is stored in
 /// [SharedPreferences] and the user is navigated to [AppShell].
-class OnboardingScreen extends ConsumerStatefulWidget {
+class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
 
   @override
-  ConsumerState<OnboardingScreen> createState() => _OnboardingScreenState();
+  State<OnboardingScreen> createState() => _OnboardingScreenState();
 }
 
-class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
+class _OnboardingScreenState extends State<OnboardingScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
 
@@ -180,28 +179,30 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               ),
               child: Column(
                 children: [
-                  // Dot indicator
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(_pages.length, (index) {
-                      final isActive = index == _currentPage;
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 250),
-                        margin: const EdgeInsets.symmetric(
-                          horizontal: AppSpacing.xs,
-                        ),
-                        width: isActive ? 24 : 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? AppColors.primary
-                              : AppColors.textTertiary.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(
-                            AppSpacing.radiusRound,
+                  Semantics(
+                    label: 'Page ${_currentPage + 1} of ${_pages.length}',
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(_pages.length, (index) {
+                        final isActive = index == _currentPage;
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 250),
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.xs,
                           ),
-                        ),
-                      );
-                    }),
+                          width: isActive ? 24 : 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: isActive
+                                ? AppColors.primary
+                                : AppColors.textTertiary.withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusRound,
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
 
@@ -252,6 +253,7 @@ class _OnboardingPage extends StatelessWidget {
               data.icon,
               size: 56,
               color: data.iconColor,
+              semanticLabel: data.title,
             ),
           ),
           const SizedBox(height: AppSpacing.xl),

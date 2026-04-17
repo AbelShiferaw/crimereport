@@ -8,8 +8,6 @@ import 'package:crimereport/features/onboarding/presentation/onboarding_screen.d
 import 'package:crimereport/shared/widgets/app_shell.dart';
 import 'package:crimereport/shared/widgets/foreground_notification_banner.dart';
 
-const String _onboardingCompleteKey = 'onboarding_complete';
-
 /// Animated splash screen shown on app launch.
 ///
 /// Displays the app logo with a fade-in animation, performs an API health
@@ -66,7 +64,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     _navigating = true;
 
     final prefs = await SharedPreferences.getInstance();
-    final onboardingComplete = prefs.getBool(_onboardingCompleteKey) ?? false;
+    final onboardingComplete = prefs.getBool(onboardingCompleteKey) ?? false;
 
     if (!mounted) return;
 
@@ -134,6 +132,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                     Icons.shield_outlined,
                     size: 48,
                     color: AppColors.textPrimary,
+                    semanticLabel: 'CrImEreport shield logo',
                   ),
                 ),
                 const SizedBox(height: AppSpacing.lg),
@@ -158,6 +157,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
                     color: AppColors.primary,
+                    semanticsLabel: 'Loading',
                   ),
                 ),
               ],

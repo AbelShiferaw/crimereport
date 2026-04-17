@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -37,9 +36,7 @@ void main() {
 
     testWidgets('renders first onboarding page', (tester) async {
       await tester.pumpWidget(
-        const ProviderScope(
-          child: MaterialApp(home: OnboardingScreen()),
-        ),
+        const MaterialApp(home: OnboardingScreen()),
       );
       await tester.pumpAndSettle();
 
@@ -50,9 +47,7 @@ void main() {
 
     testWidgets('swiping advances to second page', (tester) async {
       await tester.pumpWidget(
-        const ProviderScope(
-          child: MaterialApp(home: OnboardingScreen()),
-        ),
+        const MaterialApp(home: OnboardingScreen()),
       );
       await tester.pumpAndSettle();
 
@@ -64,9 +59,7 @@ void main() {
 
     testWidgets('last page shows Get Started button', (tester) async {
       await tester.pumpWidget(
-        const ProviderScope(
-          child: MaterialApp(home: OnboardingScreen()),
-        ),
+        const MaterialApp(home: OnboardingScreen()),
       );
       await tester.pumpAndSettle();
 
@@ -84,9 +77,7 @@ void main() {
 
     testWidgets('Continue button advances page', (tester) async {
       await tester.pumpWidget(
-        const ProviderScope(
-          child: MaterialApp(home: OnboardingScreen()),
-        ),
+        const MaterialApp(home: OnboardingScreen()),
       );
       await tester.pumpAndSettle();
 
@@ -98,9 +89,7 @@ void main() {
 
     testWidgets('renders three page dots', (tester) async {
       await tester.pumpWidget(
-        const ProviderScope(
-          child: MaterialApp(home: OnboardingScreen()),
-        ),
+        const MaterialApp(home: OnboardingScreen()),
       );
       await tester.pumpAndSettle();
 

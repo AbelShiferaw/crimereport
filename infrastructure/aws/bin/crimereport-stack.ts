@@ -76,6 +76,9 @@ const snsStack = new SnsStack(app, 'CrimeReport-Sns', {
   description: 'CrimeReport - SNS platform applications for push notifications',
 });
 
+// certificateArn is optional — omit it until an ACM certificate is provisioned.
+// To enable HTTPS: 1) Create an ACM certificate in us-east-1,
+// 2) Validate ownership via DNS (Route 53 CNAME), 3) Pass the ARN below as certificateArn.
 const computeStack = new ComputeStack(app, 'CrimeReport-Compute', {
   env,
   description: 'CrimeReport - ECS Fargate API service with ALB and auto-scaling',
