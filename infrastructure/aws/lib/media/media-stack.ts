@@ -29,6 +29,11 @@ const S3_RETRY: sfn.RetryProps = {
   backoffRate: 2,
 };
 
+export interface MediaStackProps extends cdk.StackProps {
+  /** Custom domain name for the CloudFront distribution (e.g. cdn.reportcrime.app). */
+  cdnDomainName?: string;
+}
+
 export class MediaStack extends cdk.Stack {
   public readonly uploadsBucket: s3.Bucket;
   public readonly mediaBucket: s3.Bucket;
@@ -38,7 +43,7 @@ export class MediaStack extends cdk.Stack {
   public readonly mediaConvertRole: iam.Role;
   public readonly stateMachine: sfn.StateMachine;
 
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: MediaStackProps) {
     super(scope, id, props);
 
     // ── S3 Buckets ──────────────────────────────────────────
@@ -48,9 +53,8 @@ export class MediaStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
-      versioned: false,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
       eventBridgeEnabled: true,
       cors: [
         {
@@ -66,6 +70,9 @@ export class MediaStack extends cdk.Stack {
           expiration: cdk.Duration.days(1),
           enabled: true,
         },
+        {
+          noncurrentVersionExpiration: cdk.Duration.days(30),
+        },
       ],
     });
 
@@ -74,9 +81,11 @@ export class MediaStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
-      versioned: false,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      autoDeleteObjects: true,
+      versioned: true,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      lifecycleRules: [{
+        noncurrentVersionExpiration: cdk.Duration.days(30),
+      }],
     });
 
     // ── CloudFront CDN ──────────────────────────────────────
@@ -91,6 +100,7 @@ export class MediaStack extends cdk.Stack {
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         compress: true,
       },
+      domainNames: props?.cdnDomainName ? [props.cdnDomainName] : undefined,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
       enabled: true,
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
