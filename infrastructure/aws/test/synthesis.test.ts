@@ -9,6 +9,7 @@ import { CacheStack } from '../lib/data/cache-stack';
 import { MediaStack } from '../lib/media/media-stack';
 import { ComputeStack } from '../lib/compute/compute-stack';
 import { MonitoringStack } from '../lib/monitoring/monitoring-stack';
+import { DnsStack } from '../lib/network/dns-stack';
 import { SnsStack } from '../lib/notifications/sns-stack';
 import { CicdStack } from '../lib/cicd/cicd-stack';
 import { PROJECT_PREFIX } from '../lib/config/constants';
@@ -52,6 +53,10 @@ describe('Full CDK synthesis smoke test', () => {
     });
     monitoringStack.addDependency(databaseStack); monitoringStack.addDependency(cacheStack);
     monitoringStack.addDependency(computeStack);
+    const dnsStack = new DnsStack(app, 'Test-Dns', {
+      env, alb: computeStack.alb, distribution: mediaStack.distribution,
+    });
+    dnsStack.addDependency(computeStack); dnsStack.addDependency(mediaStack);
     expect(() => app.synth()).not.toThrow();
   });
 
@@ -63,5 +68,6 @@ describe('Full CDK synthesis smoke test', () => {
     expect(names).toContain('Test-Compute');
     expect(names).toContain('Test-Media');
     expect(names).toContain('Test-Monitoring');
+    expect(names).toContain('Test-Dns');
   });
 });

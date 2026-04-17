@@ -160,6 +160,20 @@ describe('MediaStack', () => {
     });
   });
 
+  test('uploads bucket has versioning enabled', () => {
+    template.hasResourceProperties('AWS::S3::Bucket', {
+      BucketName: Match.stringLikeRegexp('crimereport-uploads-'),
+      VersioningConfiguration: { Status: 'Enabled' },
+    });
+  });
+
+  test('media bucket has versioning enabled', () => {
+    template.hasResourceProperties('AWS::S3::Bucket', {
+      BucketName: Match.stringLikeRegexp('crimereport-media-'),
+      VersioningConfiguration: { Status: 'Enabled' },
+    });
+  });
+
   test('uploads bucket does NOT have Lambda notification', () => {
     const resources = template.findResources('Custom::S3BucketNotifications');
     for (const [, resource] of Object.entries(resources)) {

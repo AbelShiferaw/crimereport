@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as cdk from 'aws-cdk-lib';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as ecrAssets from 'aws-cdk-lib/aws-ecr-assets';
@@ -38,6 +39,8 @@ export interface ComputeStackProps extends cdk.StackProps {
   cdnDomain: string;
   snsAndroidPlatformArn: string;
   snsIosPlatformArn: string;
+  /** ACM certificate ARN for HTTPS. When provided, a 443 listener is created and HTTP redirects to HTTPS. */
+  certificateArn?: string;
 }
 
 export class ComputeStack extends cdk.Stack {
@@ -46,6 +49,7 @@ export class ComputeStack extends cdk.Stack {
   public readonly service: ecs.FargateService;
   public readonly alb: elbv2.ApplicationLoadBalancer;
   public readonly listener: elbv2.ApplicationListener;
+  public readonly httpsListener?: elbv2.ApplicationListener;
   public readonly executionRole: iam.Role;
 
   constructor(scope: Construct, id: string, props: ComputeStackProps) {
@@ -66,6 +70,7 @@ export class ComputeStack extends cdk.Stack {
       cdnDomain,
       snsAndroidPlatformArn,
       snsIosPlatformArn,
+      certificateArn,
     } = props;
 
     // ── ECR Repository ──────────────────────────────────────
@@ -197,11 +202,35 @@ export class ComputeStack extends cdk.Stack {
       stickinessCookieDuration: cdk.Duration.days(1),
     });
 
-    this.listener = this.alb.addListener('HttpListener', {
-      port: 80,
-      protocol: elbv2.ApplicationProtocol.HTTP,
-      defaultTargetGroups: [targetGroup],
-    });
+    if (certificateArn) {
+      const certificate = acm.Certificate.fromCertificateArn(
+        this, 'ApiCert', certificateArn,
+      );
+
+      this.httpsListener = this.alb.addListener('HttpsListener', {
+        port: 443,
+        protocol: elbv2.ApplicationProtocol.HTTPS,
+        certificates: [certificate],
+        defaultTargetGroups: [targetGroup],
+        sslPolicy: elbv2.SslPolicy.TLS13_RES,
+      });
+
+      this.listener = this.alb.addListener('HttpListener', {
+        port: 80,
+        protocol: elbv2.ApplicationProtocol.HTTP,
+        defaultAction: elbv2.ListenerAction.redirect({
+          protocol: 'HTTPS',
+          port: '443',
+          permanent: true,
+        }),
+      });
+    } else {
+      this.listener = this.alb.addListener('HttpListener', {
+        port: 80,
+        protocol: elbv2.ApplicationProtocol.HTTP,
+        defaultTargetGroups: [targetGroup],
+      });
+    }
 
     // ── Fargate Service ─────────────────────────────────────
 
