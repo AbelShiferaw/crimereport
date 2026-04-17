@@ -65,6 +65,10 @@ class ApiClient {
     }
   }
 
+  /// The underlying Dio instance, exposed for test-only access.
+  @visibleForTesting
+  Dio get dio => _dio;
+
   /// Update the X-Device-ID header used for anonymous identification.
   void updateDeviceId(String deviceId) {
     _dio.options.headers['X-Device-ID'] = deviceId;

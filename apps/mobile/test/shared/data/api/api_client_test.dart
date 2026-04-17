@@ -1,7 +1,34 @@
+import 'dart:typed_data';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:crimereport/shared/data/api/api_client.dart';
+
+/// Mock adapter that returns a fixed status code and optional headers.
+class _MockHttpClientAdapter implements HttpClientAdapter {
+  final int statusCode;
+  final String body;
+  final Map<String, List<String>> headers;
+
+  _MockHttpClientAdapter({
+    required this.statusCode,
+    this.body = '{}',
+    this.headers = const {},
+  });
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    return ResponseBody.fromString(body, statusCode, headers: headers);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
 
 void main() {
   group('RateLimitException', () {
@@ -67,102 +94,72 @@ void main() {
   group('ApiClient 429 interceptor', () {
     test('converts 429 response to RateLimitException with retry-after',
         () async {
-      final requestOptions = RequestOptions(path: '/test');
-      final dioError = DioException(
-        requestOptions: requestOptions,
-        response: Response(
-          requestOptions: requestOptions,
-          statusCode: 429,
-          headers: Headers.fromMap({
-            'retry-after': ['60'],
-          }),
-        ),
-        type: DioExceptionType.badResponse,
+      final client = ApiClient(baseUrl: 'http://test.example.com');
+      client.dio.httpClientAdapter = _MockHttpClientAdapter(
+        statusCode: 429,
+        body: '{"error": "Too Many Requests"}',
+        headers: {'retry-after': ['60']},
       );
 
-      // Simulate what the interceptor does
-      if (dioError.response?.statusCode == 429) {
-        final retryAfter = int.tryParse(
-          dioError.response?.headers.value('retry-after') ?? '',
-        );
-        final transformed = DioException(
-          requestOptions: dioError.requestOptions,
-          error: RateLimitException(retryAfterSeconds: retryAfter),
-          type: DioExceptionType.badResponse,
-          response: dioError.response,
-        );
-
-        expect(transformed.error, isA<RateLimitException>());
-        final rateError = transformed.error as RateLimitException;
+      try {
+        await client.get('/test');
+        fail('Expected DioException to be thrown');
+      } on DioException catch (e) {
+        expect(e.error, isA<RateLimitException>());
+        final rateError = e.error as RateLimitException;
         expect(rateError.retryAfterSeconds, 60);
       }
     });
 
-    test('handles missing retry-after header', () {
-      final requestOptions = RequestOptions(path: '/test');
-      final dioError = DioException(
-        requestOptions: requestOptions,
-        response: Response(
-          requestOptions: requestOptions,
-          statusCode: 429,
-        ),
-        type: DioExceptionType.badResponse,
+    test('handles missing retry-after header', () async {
+      final client = ApiClient(baseUrl: 'http://test.example.com');
+      client.dio.httpClientAdapter = _MockHttpClientAdapter(
+        statusCode: 429,
+        body: '{"error": "Too Many Requests"}',
       );
 
-      final retryAfter = int.tryParse(
-        dioError.response?.headers.value('retry-after') ?? '',
-      );
-
-      expect(retryAfter, isNull);
-
-      final transformed = DioException(
-        requestOptions: dioError.requestOptions,
-        error: RateLimitException(retryAfterSeconds: retryAfter),
-        type: DioExceptionType.badResponse,
-        response: dioError.response,
-      );
-
-      final rateError = transformed.error as RateLimitException;
-      expect(rateError.retryAfterSeconds, isNull);
-    });
-
-    test('does not convert non-429 errors', () {
-      final requestOptions = RequestOptions(path: '/test');
-      final dioError = DioException(
-        requestOptions: requestOptions,
-        response: Response(
-          requestOptions: requestOptions,
-          statusCode: 500,
-        ),
-        type: DioExceptionType.badResponse,
-      );
-
-      if (dioError.response?.statusCode == 429) {
-        fail('Should not enter 429 handler for status 500');
+      try {
+        await client.get('/test');
+        fail('Expected DioException to be thrown');
+      } on DioException catch (e) {
+        expect(e.error, isA<RateLimitException>());
+        final rateError = e.error as RateLimitException;
+        expect(rateError.retryAfterSeconds, isNull);
       }
-
-      expect(dioError.response?.statusCode, 500);
-      expect(dioError.error, isNot(isA<RateLimitException>()));
     });
 
-    test('handles non-numeric retry-after header', () {
-      final requestOptions = RequestOptions(path: '/test');
-      final dioError = DioException(
-        requestOptions: requestOptions,
-        response: Response(
-          requestOptions: requestOptions,
-          statusCode: 429,
-          headers: Headers.fromMap({
-            'retry-after': ['not-a-number'],
-          }),
-        ),
-        type: DioExceptionType.badResponse,
+    test('does not convert non-429 errors', () async {
+      final client = ApiClient(baseUrl: 'http://test.example.com');
+      client.dio.httpClientAdapter = _MockHttpClientAdapter(
+        statusCode: 500,
+        body: '{"error": "Internal Server Error"}',
       );
 
-      final retryAfter = int.tryParse(
-        dioError.response?.headers.value('retry-after') ?? '',
+      try {
+        await client.get('/test');
+        fail('Expected DioException to be thrown');
+      } on DioException catch (e) {
+        expect(e.error, isNot(isA<RateLimitException>()));
+        expect(e.response?.statusCode, 500);
+      }
+    });
+
+    test('handles non-numeric retry-after header', () async {
+      final client = ApiClient(baseUrl: 'http://test.example.com');
+      client.dio.httpClientAdapter = _MockHttpClientAdapter(
+        statusCode: 429,
+        body: '{"error": "Too Many Requests"}',
+        headers: {'retry-after': ['not-a-number']},
       );
-      expect(retryAfter, isNull);
+
+      try {
+        await client.get('/test');
+        fail('Expected DioException to be thrown');
+      } on DioException catch (e) {
+        expect(e.error, isA<RateLimitException>());
+        final rateError = e.error as RateLimitException;
+        expect(rateError.retryAfterSeconds, isNull);
+      }
     });
 
     test('RateLimitException with retryAfterSeconds of 0', () {

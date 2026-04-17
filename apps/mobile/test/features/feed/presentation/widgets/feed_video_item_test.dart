@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:crimereport/core/constants/enums.dart';
+import 'package:crimereport/core/theme/theme.dart';
 import 'package:crimereport/features/feed/data/models/media.dart';
 import 'package:crimereport/features/feed/data/models/report.dart';
 import 'package:crimereport/features/feed/presentation/widgets/feed_video_item.dart';
@@ -202,11 +203,15 @@ void main() {
         await tester.pumpWidget(buildTestWidget());
         await tester.pump();
 
-        // The upvote button should exist
         expect(
           find.bySemanticsLabel(RegExp('Upvote.*')),
           findsOneWidget,
         );
+
+        final upvoteIcon = tester.widget<Icon>(
+          find.byIcon(Icons.arrow_upward_rounded),
+        );
+        expect(upvoteIcon.color, equals(Colors.white));
       });
 
       testWidgets('shows upvoted state when report is in upvoted set',
@@ -219,8 +224,12 @@ void main() {
         ));
         await tester.pump();
 
-        // The upvote button should reflect active state
         expect(find.byType(FeedActionButtons), findsOneWidget);
+
+        final upvoteIcon = tester.widget<Icon>(
+          find.byIcon(Icons.arrow_upward_rounded),
+        );
+        expect(upvoteIcon.color, equals(AppColors.accent));
       });
     });
 
