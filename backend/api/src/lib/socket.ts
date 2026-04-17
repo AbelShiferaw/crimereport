@@ -124,7 +124,6 @@ function handleConnection(socket: Socket) {
   socket.data.reportRooms = new Set<string>();
 
   logger.info({ socketId: socket.id, deviceId }, 'ws client connected');
-  emitConnectionGauge();
 
   socket.on('subscribe:location', (data: { lat: number; lng: number; radius?: number }) => {
     if (typeof data?.lat !== 'number' || typeof data?.lng !== 'number') return;
@@ -172,7 +171,6 @@ function handleConnection(socket: Socket) {
       deviceConnectionCount.set(deviceId, count - 1);
     }
     logger.info({ socketId: socket.id, reason }, 'ws client disconnected');
-    emitConnectionGauge();
   });
 }
 

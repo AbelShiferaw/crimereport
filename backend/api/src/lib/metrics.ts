@@ -1,5 +1,4 @@
 import { createMetricsLogger, Unit, MetricsLogger } from 'aws-embedded-metrics';
-import { config } from '../config';
 import { logger } from './logger';
 
 const NAMESPACE = 'CrimeReport';

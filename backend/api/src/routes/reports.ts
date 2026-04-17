@@ -312,6 +312,10 @@ router.get('/:id/media/status', async (req: Request, res: Response) => {
       metrics.recordMediaUploadCompleted().catch((err) =>
         logger.warn({ err }, 'failed to record MediaUploadsCompleted metric'),
       );
+      const durationMs = Date.now() - new Date(report.created_at).getTime();
+      metrics.recordMediaProcessingLatency(durationMs).catch((err) =>
+        logger.warn({ err }, 'failed to record MediaProcessingLatency metric'),
+      );
     }
   } else if (anyFailed && report.status === 'processing') {
     await reportModel.updateStatus(id, 'failed');
