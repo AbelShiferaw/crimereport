@@ -125,3 +125,162 @@ describe('WebSocket connection limit', () => {
     await new Promise((r) => setTimeout(r, 200));
   });
 });
+
+describe('WebSocket unsubscribe:location', () => {
+  it('client leaves location room on unsubscribe', async () => {
+    const client = connectClient({ deviceId: 'unsub-loc-device' });
+    await waitForConnect(client);
+
+    client.emit('subscribe:location', { lat: 51.5, lng: -0.1 });
+    await new Promise((r) => setTimeout(r, 100));
+    const room = 'location:51.5:-0.1';
+    expect(serverSocket.sockets.adapter.rooms.has(room)).toBe(true);
+
+    client.emit('unsubscribe:location');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(serverSocket.sockets.adapter.rooms.get(room)?.size ?? 0).toBe(0);
+
+    client.disconnect();
+  });
+
+  it('handles unsubscribe when not subscribed to any location', async () => {
+    const client = connectClient({ deviceId: 'no-loc-device' });
+    await waitForConnect(client);
+
+    client.emit('unsubscribe:location');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(client.connected).toBe(true);
+
+    client.disconnect();
+  });
+});
+
+describe('WebSocket subscribe:location — geographic validation', () => {
+  it('ignores subscribe with lat out of range (-90 to 90)', async () => {
+    const client = connectClient({ deviceId: 'geo-validate-device' });
+    await waitForConnect(client);
+
+    client.emit('subscribe:location', { lat: 91, lng: 0 });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(client.connected).toBe(true);
+
+    client.disconnect();
+  });
+
+  it('ignores subscribe with lng out of range (-180 to 180)', async () => {
+    const client = connectClient({ deviceId: 'geo-validate-device-2' });
+    await waitForConnect(client);
+
+    client.emit('subscribe:location', { lat: 0, lng: 181 });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(client.connected).toBe(true);
+
+    client.disconnect();
+  });
+
+  it('replaces previous location room when subscribing to new location', async () => {
+    const client = connectClient({ deviceId: 'move-device' });
+    await waitForConnect(client);
+
+    client.emit('subscribe:location', { lat: 40.7, lng: -74.0 });
+    await new Promise((r) => setTimeout(r, 100));
+    const room1 = 'location:40.7:-74.0';
+    expect(serverSocket.sockets.adapter.rooms.has(room1)).toBe(true);
+
+    client.emit('subscribe:location', { lat: 51.5, lng: -0.1 });
+    await new Promise((r) => setTimeout(r, 100));
+    const room2 = 'location:51.5:-0.1';
+    expect(serverSocket.sockets.adapter.rooms.has(room2)).toBe(true);
+    expect(serverSocket.sockets.adapter.rooms.get(room1)?.size ?? 0).toBe(0);
+
+    client.disconnect();
+  });
+});
+
+describe('WebSocket subscribe:report — room cap', () => {
+  it('stops joining after MAX_REPORT_ROOMS (50)', async () => {
+    const client = connectClient({ deviceId: 'cap-device' });
+    await waitForConnect(client);
+
+    for (let i = 0; i < 50; i++) {
+      client.emit('subscribe:report', `report-${i}`);
+    }
+    await new Promise((r) => setTimeout(r, 300));
+
+    client.emit('subscribe:report', 'report-51');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(serverSocket.sockets.adapter.rooms.has('report:report-51')).toBe(false);
+
+    client.disconnect();
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+  it('ignores non-string reportId', async () => {
+    const client = connectClient({ deviceId: 'type-check-device' });
+    await waitForConnect(client);
+
+    client.emit('subscribe:report', 12345 as any);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(client.connected).toBe(true);
+
+    client.disconnect();
+  });
+
+  it('ignores empty string reportId', async () => {
+    const client = connectClient({ deviceId: 'empty-report-device' });
+    await waitForConnect(client);
+
+    client.emit('subscribe:report', '');
+    await new Promise((r) => setTimeout(r, 100));
+    expect(client.connected).toBe(true);
+
+    client.disconnect();
+  });
+});
+
+describe('WebSocket disconnect cleanup', () => {
+  it('frees connection slot after disconnect, allowing new connections', async () => {
+    const deviceId = 'reconnect-device';
+    const clients: ClientSocket[] = [];
+
+    for (let i = 0; i < 3; i++) {
+      const c = connectClient({ deviceId });
+      await waitForConnect(c);
+      clients.push(c);
+    }
+
+    clients[0].disconnect();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const replacement = connectClient({ deviceId });
+    await waitForConnect(replacement);
+    expect(replacement.connected).toBe(true);
+
+    replacement.disconnect();
+    for (const c of clients.slice(1)) c.disconnect();
+    await new Promise((r) => setTimeout(r, 200));
+  });
+});
+
+describe('WebSocket auth — deviceId length', () => {
+  it('rejects deviceId longer than 64 characters', async () => {
+    const client = connectClient({ deviceId: 'x'.repeat(65) });
+    const err = await waitForError(client);
+    expect(err.message).toContain('Invalid device ID');
+    client.disconnect();
+  });
+
+  it('accepts deviceId at max length (64)', async () => {
+    const client = connectClient({ deviceId: 'y'.repeat(64) });
+    await waitForConnect(client);
+    expect(client.connected).toBe(true);
+    client.disconnect();
+  });
+
+  it('accepts deviceId at min length (1)', async () => {
+    const client = connectClient({ deviceId: 'z' });
+    await waitForConnect(client);
+    expect(client.connected).toBe(true);
+    client.disconnect();
+  });
+});

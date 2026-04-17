@@ -60,4 +60,103 @@ describe('device-activity model', () => {
       expect((mockQuery.mock.calls[0][0] as string)).toContain('report_count_today + 1');
     });
   });
+
+  describe('flag — unflag path', () => {
+    it('can unflag a device by passing false', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
+      await deviceModel.flag('d1', false);
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('SET flagged = $2'),
+        ['d1', false],
+      );
+    });
+  });
+
+  describe('resetDailyCounts — WHERE predicate', () => {
+    it('only resets devices where report_count_today > 0', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 5 } as any);
+      await deviceModel.resetDailyCounts();
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE report_count_today > 0'),
+      );
+    });
+
+    it('returns 0 when no devices had reports today', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
+      const result = await deviceModel.resetDailyCounts();
+      expect(result).toBe(0);
+    });
+
+    it('handles null rowCount gracefully', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: null } as any);
+      const result = await deviceModel.resetDailyCounts();
+      expect(result).toBe(0);
+    });
+  });
+
+  describe('getOrCreate — SQL assertions', () => {
+    it('uses INSERT INTO device_activity with ON CONFLICT DO UPDATE', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ device_id: 'd-new', report_count_today: 0, last_report_at: null, flagged: false, created_at: new Date() }], rowCount: 1 } as any);
+      await deviceModel.getOrCreate('d-new');
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('ON CONFLICT (device_id) DO UPDATE'),
+        ['d-new'],
+      );
+    });
+
+    it('returns RETURNING clause fields', async () => {
+      const now = new Date();
+      mockQuery.mockResolvedValueOnce({
+        rows: [{ device_id: 'd1', report_count_today: 5, last_report_at: now, flagged: true, created_at: now }],
+        rowCount: 1,
+      } as any);
+      const result = await deviceModel.getOrCreate('d1');
+      expect(result).toHaveProperty('device_id');
+      expect(result).toHaveProperty('report_count_today');
+      expect(result).toHaveProperty('flagged');
+      expect(result).toHaveProperty('created_at');
+    });
+  });
+
+  describe('incrementReportCount — SQL details', () => {
+    it('updates last_report_at with NOW()', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ device_id: 'd1', report_count_today: 1 }], rowCount: 1 } as any);
+      await deviceModel.incrementReportCount('d1');
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('last_report_at = NOW()'),
+        ['d1'],
+      );
+    });
+
+    it('targets correct device via WHERE device_id = $1', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ device_id: 'target', report_count_today: 1 }], rowCount: 1 } as any);
+      await deviceModel.incrementReportCount('target');
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE device_id = $1'),
+        ['target'],
+      );
+    });
+  });
+
+  describe('query error handling', () => {
+    it('propagates db errors from getOrCreate', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('connection error'));
+      await expect(deviceModel.getOrCreate('d1')).rejects.toThrow('connection error');
+    });
+
+    it('propagates db errors from incrementReportCount', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('timeout'));
+      await expect(deviceModel.incrementReportCount('d1')).rejects.toThrow('timeout');
+    });
+
+    it('propagates db errors from flag', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('db down'));
+      await expect(deviceModel.flag('d1', true)).rejects.toThrow('db down');
+    });
+
+    it('propagates db errors from resetDailyCounts', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('locked'));
+      await expect(deviceModel.resetDailyCounts()).rejects.toThrow('locked');
+    });
+  });
 });

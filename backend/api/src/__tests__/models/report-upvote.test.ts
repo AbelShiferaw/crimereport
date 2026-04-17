@@ -75,4 +75,103 @@ describe('report-upvote model', () => {
       expect(updateCall![0]).toContain('GREATEST(upvotes - 1, 0)');
     });
   });
+
+  describe('toggle — upvotes + 1 on insert', () => {
+    it('uses upvotes + 1 when adding an upvote', async () => {
+      const client = createMockClient();
+      mockGetClient.mockResolvedValueOnce(client as any);
+      client.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: 'r1' }] }) // SELECT FOR UPDATE
+        .mockResolvedValueOnce({ rows: [] }) // SELECT upvote (not found)
+        .mockResolvedValueOnce(undefined) // INSERT
+        .mockResolvedValueOnce(undefined) // UPDATE upvotes + 1
+        .mockResolvedValueOnce(undefined); // COMMIT
+      await upvoteModel.toggle('r1', 'd1');
+
+      const incrementCall = client.query.mock.calls.find(
+        (c: any[]) => typeof c[0] === 'string' && c[0].includes('upvotes + 1'),
+      );
+      expect(incrementCall).toBeDefined();
+      expect(incrementCall![0]).toContain('upvotes + 1');
+      expect(incrementCall![1]).toEqual(['r1']);
+    });
+  });
+
+  describe('toggle — locks report row', () => {
+    it('acquires FOR UPDATE lock on report before checking upvote', async () => {
+      const client = createMockClient();
+      mockGetClient.mockResolvedValueOnce(client as any);
+      client.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockResolvedValueOnce({ rows: [{ id: 'r1' }] }) // SELECT FOR UPDATE
+        .mockResolvedValueOnce({ rows: [] }) // upvote check
+        .mockResolvedValueOnce(undefined) // INSERT
+        .mockResolvedValueOnce(undefined) // UPDATE
+        .mockResolvedValueOnce(undefined); // COMMIT
+
+      await upvoteModel.toggle('r1', 'd1');
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('FOR UPDATE'),
+        ['r1'],
+      );
+      const calls = client.query.mock.calls.map((c: any[]) => c[0]);
+      const lockIdx = calls.findIndex((s: string) => typeof s === 'string' && s.includes('FOR UPDATE'));
+      const beginIdx = calls.indexOf('BEGIN');
+      expect(lockIdx).toBeGreaterThan(beginIdx);
+    });
+  });
+
+  describe('existsForDevice — SQL assertions', () => {
+    it('queries report_upvotes table with correct parameters', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ '?column?': 1 }], rowCount: 1 } as any);
+
+      await upvoteModel.existsForDevice('report-xyz', 'device-abc');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('FROM report_upvotes'),
+        ['report-xyz', 'device-abc'],
+      );
+    });
+
+    it('uses report_id = $1 AND device_id = $2', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
+
+      await upvoteModel.existsForDevice('r1', 'd1');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('report_id = $1 AND device_id = $2'),
+        ['r1', 'd1'],
+      );
+    });
+  });
+
+  describe('toggle — client release', () => {
+    it('always releases the client after success', async () => {
+      const client = createMockClient();
+      mockGetClient.mockResolvedValueOnce(client as any);
+      client.query
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({ rows: [{ id: 'r1' }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined);
+
+      await upvoteModel.toggle('r1', 'd1');
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('always releases the client after failure', async () => {
+      const client = createMockClient();
+      mockGetClient.mockResolvedValueOnce(client as any);
+      client.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockRejectedValueOnce(new Error('error'));
+
+      await expect(upvoteModel.toggle('r1', 'd1')).rejects.toThrow();
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+  });
 });

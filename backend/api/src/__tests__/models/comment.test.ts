@@ -170,5 +170,150 @@ describe('comment model', () => {
         ['d1'],
       );
     });
+
+    it('returns 0 when no comments today', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 } as any);
+
+      const result = await commentModel.countTodayByDevice('d1');
+
+      expect(result).toBe(0);
+    });
+
+    it('passes device_id as $1', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 } as any);
+
+      await commentModel.countTodayByDevice('device-xyz');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE device_id = $1'),
+        ['device-xyz'],
+      );
+    });
+  });
+
+  describe('countByReportId — edge cases', () => {
+    it('returns 0 when no comments exist for report', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 } as any);
+
+      const result = await commentModel.countByReportId('empty-report');
+
+      expect(result).toBe(0);
+    });
+
+    it('parses large count values correctly', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: '9999' }], rowCount: 1 } as any);
+
+      const result = await commentModel.countByReportId('popular-report');
+
+      expect(result).toBe(9999);
+    });
+
+    it('passes report_id as $1', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [{ count: '5' }], rowCount: 1 } as any);
+
+      await commentModel.countByReportId('report-abc');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE report_id = $1'),
+        ['report-abc'],
+      );
+    });
+  });
+
+  describe('deleteById — edge cases', () => {
+    it('SQL targets comments table with id parameter', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
+
+      await commentModel.deleteById('c1');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM comments WHERE id = $1'),
+        ['c1'],
+      );
+    });
+
+    it('handles null rowCount gracefully (returns false)', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: null } as any);
+
+      const result = await commentModel.deleteById('c-null');
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('findByReportId — edge cases', () => {
+    it('returns empty array for report with no comments', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
+
+      const result = await commentModel.findByReportId('no-comments-report');
+
+      expect(result).toEqual([]);
+    });
+
+    it('SQL orders by created_at DESC', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
+
+      await commentModel.findByReportId('r1');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('ORDER BY created_at DESC'),
+        expect.any(Array),
+      );
+    });
+  });
+
+  describe('createForReport — edge cases', () => {
+    it('releases client even when commit succeeds', async () => {
+      const client = createMockClient();
+      mockGetClient.mockResolvedValueOnce(client as any);
+
+      const fakeRow = { id: 'c-ok', report_id: 'r1', device_id: 'd1', content: 'ok' };
+      client.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockResolvedValueOnce({ rows: [fakeRow] }) // INSERT
+        .mockResolvedValueOnce(undefined) // UPDATE
+        .mockResolvedValueOnce(undefined); // COMMIT
+
+      await commentModel.createForReport({ report_id: 'r1', device_id: 'd1', content: 'ok' });
+
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls back when UPDATE comment_count fails', async () => {
+      const client = createMockClient();
+      mockGetClient.mockResolvedValueOnce(client as any);
+
+      const fakeRow = { id: 'c-fail', report_id: 'r1', device_id: 'd1', content: 'test' };
+      client.query
+        .mockResolvedValueOnce(undefined) // BEGIN
+        .mockResolvedValueOnce({ rows: [fakeRow] }) // INSERT
+        .mockRejectedValueOnce(new Error('FK violation')); // UPDATE fails
+
+      await expect(
+        commentModel.createForReport({ report_id: 'r1', device_id: 'd1', content: 'test' }),
+      ).rejects.toThrow('FK violation');
+
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(client.release).toHaveBeenCalled();
+    });
+  });
+
+  describe('query error handling', () => {
+    it('propagates db errors from findByReportId', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('connection error'));
+      await expect(commentModel.findByReportId('r1')).rejects.toThrow('connection error');
+    });
+
+    it('propagates db errors from create', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('disk full'));
+      await expect(
+        commentModel.create({ report_id: 'r1', device_id: 'd1', content: 'test' }),
+      ).rejects.toThrow('disk full');
+    });
+
+    it('propagates db errors from countByReportId', async () => {
+      mockQuery.mockRejectedValueOnce(new Error('timeout'));
+      await expect(commentModel.countByReportId('r1')).rejects.toThrow('timeout');
+    });
   });
 });
