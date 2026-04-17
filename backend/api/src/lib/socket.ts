@@ -3,6 +3,7 @@ import { createAdapter } from '@socket.io/redis-adapter';
 import { createClient } from 'redis';
 import { config } from '../config';
 import { logger } from './logger';
+import * as metrics from './metrics';
 
 let io: SocketServer | null = null;
 let redisAdapterHealthy = false;
@@ -14,6 +15,16 @@ const REDIS_RETRY_ATTEMPTS = 3;
 const REDIS_RETRY_DELAY_MS = 2000;
 
 const deviceConnectionCount = new Map<string, number>();
+const WS_METRICS_INTERVAL_MS = 60_000;
+let wsMetricsTimer: ReturnType<typeof setInterval> | null = null;
+
+function emitConnectionGauge(): void {
+  if (!io) return;
+  const count = io.engine?.clientsCount ?? 0;
+  metrics.recordWebSocketConnections(count).catch((err) =>
+    logger.warn({ err }, 'failed to record WebSocketConnections metric'),
+  );
+}
 
 export function getIO(): SocketServer {
   if (!io) throw new Error('Socket.io not initialised');
@@ -82,6 +93,9 @@ export function initSocket(httpServer: import('http').Server): SocketServer {
   connectRedisAdapter(io).catch((err) =>
     logger.error({ err }, 'unexpected error in connectRedisAdapter'),
   );
+
+  wsMetricsTimer = setInterval(emitConnectionGauge, WS_METRICS_INTERVAL_MS);
+  wsMetricsTimer.unref();
 
   return io;
 }
@@ -179,6 +193,10 @@ export function overlappingRooms(lat: number, lng: number): string[] {
 }
 
 export async function shutdownSocket(): Promise<void> {
+  if (wsMetricsTimer) {
+    clearInterval(wsMetricsTimer);
+    wsMetricsTimer = null;
+  }
   if (io) {
     await new Promise<void>((resolve) => io!.close(() => resolve()));
     io = null;

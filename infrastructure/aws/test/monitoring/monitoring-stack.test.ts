@@ -124,8 +124,20 @@ describe('MonitoringStack', () => {
     });
   });
 
-  test('creates 10 alarms total', () => {
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 10);
+  test('creates 11 alarms total (10 infra + 1 custom app metric)', () => {
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 11);
+  });
+
+  // ── Custom Application Metrics (EMF) ────────────────────
+
+  test('creates MediaFailureRate alarm', () => {
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      AlarmName: 'crimereport-media-failure-rate',
+      Threshold: 5,
+      EvaluationPeriods: 3,
+      MetricName: 'MediaFailureRate',
+      Namespace: 'CrimeReport',
+    });
   });
 
   // ── Dashboard ──────────────────────────────────────────
@@ -158,7 +170,7 @@ describe('MonitoringStack', () => {
   test('all alarms have alarm actions configured', () => {
     const alarms = template.findResources('AWS::CloudWatch::Alarm');
     const alarmIds = Object.keys(alarms);
-    expect(alarmIds).toHaveLength(10);
+    expect(alarmIds).toHaveLength(11);
 
     for (const id of alarmIds) {
       const alarm = alarms[id];
@@ -167,5 +179,21 @@ describe('MonitoringStack', () => {
       expect(alarm.Properties.OKActions).toBeDefined();
       expect(alarm.Properties.OKActions).toHaveLength(1);
     }
+  });
+
+  test('dashboard body contains custom application metrics widgets', () => {
+    const dashboards = template.findResources('AWS::CloudWatch::Dashboard');
+    const dashboardIds = Object.keys(dashboards);
+    expect(dashboardIds).toHaveLength(1);
+
+    const body = JSON.stringify(dashboards[dashboardIds[0]].Properties.DashboardBody);
+    expect(body).toContain('Application Metrics (EMF)');
+    expect(body).toContain('ReportsCreated');
+    expect(body).toContain('MediaUploadsCompleted');
+    expect(body).toContain('MediaFailureRate');
+    expect(body).toContain('MediaProcessingLatency');
+    expect(body).toContain('WebSocketConnections');
+    expect(body).toContain('RateLimitHits');
+    expect(body).toContain('CrimeReport');
   });
 });
