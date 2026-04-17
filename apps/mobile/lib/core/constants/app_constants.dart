@@ -1,20 +1,22 @@
-class AppConstants {
-  // API Configuration
-  static const String apiBaseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://localhost:3000',
-  );
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-  static const String wsBaseUrl = String.fromEnvironment(
-    'WS_BASE_URL',
-    defaultValue: 'ws://localhost:3000',
-  );
+class AppConstants {
+  // API Configuration — reads from .env at runtime, falls back to --dart-define,
+  // then to localhost for local development.
+  static String get apiBaseUrl =>
+      dotenv.env['API_BASE_URL'] ??
+      const String.fromEnvironment('API_BASE_URL',
+          defaultValue: 'http://localhost:3000');
+
+  static String get wsBaseUrl =>
+      dotenv.env['WS_BASE_URL'] ??
+      const String.fromEnvironment('WS_BASE_URL',
+          defaultValue: 'ws://localhost:3000');
 
   // Map Configuration
-  static const String mapboxToken = String.fromEnvironment(
-    'MAPBOX_TOKEN',
-    defaultValue: '',
-  );
+  static String get mapboxToken =>
+      dotenv.env['MAPBOX_ACCESS_TOKEN'] ??
+      const String.fromEnvironment('MAPBOX_TOKEN', defaultValue: '');
 
   // Default Values
   static const double defaultLatitude = 37.7749; // San Francisco

@@ -9,7 +9,7 @@
       "client_info": {
         "mobilesdk_app_id": "1:1025899245712:android:34e0e1f73d228cd5ca6815",
         "android_client_info": {
-          "package_name": "com.example.reportcrime"
+          "package_name": "com.report.reportcrime"
         }
       },
       "oauth_client": [],

@@ -105,14 +105,12 @@ Full endpoint documentation: [backend/api/README.md](backend/api/README.md)
 |-------|-----------|--------|
 | A: Flutter App | 1-13 | Completed |
 | B: AWS Infrastructure | 14-17 | Completed |
-| C: Backend API | 18-22 | Completed |
-| C: Backend API (cont.) | 23 | Completed |
-| C: Backend API (cont.) | 24 | Completed |
+| C: Backend API | 18-24 | Completed |
 | C.5: CI/CD | 24.5 | Completed |
-| D: Integration | 25-28 | In Progress |
-| E: Testing & Launch | 29 | In Progress |
-| E: Testing & Launch | 30 | In Progress (infra + docs) |
-| E: Testing & Launch | 31 | Not started |
+| D: Integration | 25-28 | Completed |
+| E: Testing & QA | 29 | Completed |
+| E: Launch Prep | 30 | Completed |
+| E: App Store Submission | 31 | Not started |
 
 See [docs/design/](docs/design/) for detailed milestone plans.
 
