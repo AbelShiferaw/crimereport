@@ -16,7 +16,7 @@ Requires **Milestone 30** complete (launch prep — production infra, assets, pr
 **Pre-build checklist:**
 
 - [ ] `apps/mobile/pubspec.yaml` version is set (e.g., `version: 1.0.0+1`)
-- [ ] `apps/mobile/ios/Runner.xcodeproj` — Bundle ID: `com.reportcrime.app`
+- [ ] `apps/mobile/ios/Runner.xcodeproj` — Bundle ID: `com.report.reportcrime`
 - [ ] Signing certificate and provisioning profile are valid (Apple Developer account)
 - [ ] Push notification capability enabled in Xcode Signing & Capabilities
 - [ ] `NSLocationWhenInUseUsageDescription` set in `Info.plist`
@@ -55,7 +55,7 @@ open ios/Runner.xcworkspace
 App Information:
   Name: CrimeReport
   Subtitle: Anonymous Crime Reporting
-  Bundle ID: com.reportcrime.app
+  Bundle ID: com.report.reportcrime
   SKU: crimereport-001
   Primary Language: English (U.S.)
 
@@ -119,7 +119,7 @@ Keywords: crime, report, anonymous, safety, neighborhood, alert, community, map
 **Pre-build checklist:**
 
 - [ ] `apps/mobile/pubspec.yaml` version is set (e.g., `version: 1.0.0+1`)
-- [ ] `apps/mobile/android/app/build.gradle` — applicationId: `com.reportcrime.app`
+- [ ] `apps/mobile/android/app/build.gradle` — applicationId: `com.report.reportcrime`
 - [ ] Upload signing key created and stored securely
 - [ ] `android/key.properties` configured (not committed to git)
 - [ ] `android/app/build.gradle` references `key.properties` for release signing
