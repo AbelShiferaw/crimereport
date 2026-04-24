@@ -38,8 +38,16 @@ class AppColors {
   static const Color crimeVandalism = Color(0xFF9C27B0);
   static const Color crimeSuspicious = Color(0xFFFFC107);
   static const Color crimeDrug = Color(0xFF4CAF50);
-  static const Color crimeDisturbance = Color(0xFF2196F3);
   static const Color crimeOther = Color(0xFF9E9E9E);
+  // New types added to align with the backend's 11 CRIME_TYPES.
+  static const Color crimeRobbery = Color(0xFFD32F2F); // deep red
+  static const Color crimeBurglary = Color(0xFF6D4C41); // brown
+  static const Color crimeShooting = Color(0xFFB71C1C); // darker red
+  static const Color crimeCarjacking = Color(0xFFF57C00); // deep orange
+  static const Color crimeHarassment = Color(0xFFAD1457); // magenta
+  // Deprecated: `disturbance` is no longer a backend crime type. Constant
+  // retained for backwards compatibility in case older builds reference it.
+  static const Color crimeDisturbance = Color(0xFF2196F3);
 
   // ============ UI Element Colors ============
   static const Color divider = Color(0xFF3D3D3D);

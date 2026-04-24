@@ -4,13 +4,21 @@ import 'package:crimereport/core/constants/enums.dart';
 
 void main() {
   group('ReportType', () {
-    test('has correct number of values', () {
-      expect(ReportType.values.length, 7);
+    test('has 11 values aligned with backend CRIME_TYPES', () {
+      expect(ReportType.values.length, 11);
     });
 
     test('each value has a non-empty displayName', () {
       for (final type in ReportType.values) {
         expect(type.displayName, isNotEmpty);
+      }
+    });
+
+    test('each value has a non-empty apiName (snake_case wire format)', () {
+      for (final type in ReportType.values) {
+        expect(type.apiName, isNotEmpty);
+        // apiName must be lowercase snake_case.
+        expect(type.apiName, matches(RegExp(r'^[a-z_]+$')));
       }
     });
 
@@ -24,10 +32,52 @@ void main() {
       expect(ReportType.theft.displayName, 'Theft');
       expect(ReportType.assault.displayName, 'Assault');
       expect(ReportType.vandalism.displayName, 'Vandalism');
+      expect(ReportType.robbery.displayName, 'Robbery');
+      expect(ReportType.burglary.displayName, 'Burglary');
       expect(ReportType.suspicious.displayName, 'Suspicious Activity');
+      expect(ReportType.shooting.displayName, 'Shooting');
+      expect(ReportType.carjacking.displayName, 'Carjacking');
+      expect(ReportType.harassment.displayName, 'Harassment');
       expect(ReportType.drugActivity.displayName, 'Drug Activity');
-      expect(ReportType.disturbance.displayName, 'Disturbance');
       expect(ReportType.other.displayName, 'Other');
+    });
+
+    test('apiName matches backend CRIME_TYPES wire format', () {
+      expect(ReportType.theft.apiName, 'theft');
+      expect(ReportType.assault.apiName, 'assault');
+      expect(ReportType.vandalism.apiName, 'vandalism');
+      expect(ReportType.robbery.apiName, 'robbery');
+      expect(ReportType.burglary.apiName, 'burglary');
+      expect(ReportType.suspicious.apiName, 'suspicious');
+      expect(ReportType.shooting.apiName, 'shooting');
+      expect(ReportType.carjacking.apiName, 'carjacking');
+      expect(ReportType.harassment.apiName, 'harassment');
+      expect(ReportType.drugActivity.apiName, 'drug_activity');
+      expect(ReportType.other.apiName, 'other');
+    });
+
+    test('fromApiName roundtrips every value', () {
+      for (final type in ReportType.values) {
+        expect(ReportType.fromApiName(type.apiName), type);
+      }
+    });
+
+    test('fromApiName recognises the snake_case `drug_activity`', () {
+      expect(
+        ReportType.fromApiName('drug_activity'),
+        ReportType.drugActivity,
+      );
+    });
+
+    test('fromApiName throws for unknown names', () {
+      expect(
+        () => ReportType.fromApiName('disturbance'),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => ReportType.fromApiName('not_a_crime'),
+        throwsA(isA<ArgumentError>()),
+      );
     });
 
     test('all colors are distinct', () {
