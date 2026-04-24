@@ -6,7 +6,7 @@ class Report {
   final String id;
   final String deviceId;
   final ReportType type;
-  final String description;
+  final String? description;
   final double latitude;
   final double longitude;
   final String? address;
@@ -85,13 +85,18 @@ class Report {
   }
 
   /// Create from JSON (for API responses).
+  ///
+  /// The backend serializes coordinates as `lat`/`lng` (not
+  /// `latitude`/`longitude`) and crime types as snake_case strings. We use
+  /// [ReportType.fromApiName] so values like `drug_activity` parse
+  /// correctly.
   factory Report.fromJson(Map<String, dynamic> json) => Report(
         id: json['id'] as String,
         deviceId: json['device_id'] as String,
-        type: ReportType.values.byName(json['type'] as String),
-        description: json['description'] as String,
-        latitude: (json['latitude'] as num).toDouble(),
-        longitude: (json['longitude'] as num).toDouble(),
+        type: ReportType.fromApiName(json['type'] as String),
+        description: json['description'] as String?,
+        latitude: (json['lat'] as num).toDouble(),
+        longitude: (json['lng'] as num).toDouble(),
         address: json['address'] as String?,
         media: (json['media'] as List<dynamic>?)
                 ?.map((e) => Media.fromJson(e as Map<String, dynamic>))
@@ -107,10 +112,10 @@ class Report {
   Map<String, dynamic> toJson() => {
         'id': id,
         'device_id': deviceId,
-        'type': type.name,
+        'type': type.apiName,
         'description': description,
-        'latitude': latitude,
-        'longitude': longitude,
+        'lat': latitude,
+        'lng': longitude,
         'address': address,
         'media': media.map((m) => m.toJson()).toList(),
         'upvotes': upvotes,
@@ -130,7 +135,8 @@ class Report {
   }
 
   @override
-  String toString() => 'Report(id: $id, type: ${type.name}, address: $address)';
+  String toString() =>
+      'Report(id: $id, type: ${type.apiName}, address: $address)';
 
   @override
   bool operator ==(Object other) =>

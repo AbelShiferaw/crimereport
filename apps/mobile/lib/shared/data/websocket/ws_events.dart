@@ -38,7 +38,7 @@ class NewReportEvent extends ReportEvent {
   factory NewReportEvent.fromJson(Map<String, dynamic> json) {
     return NewReportEvent(
       id: json['id'] as String,
-      type: ReportType.values.byName(json['type'] as String),
+      type: ReportType.fromApiName(json['type'] as String),
       lat: (json['lat'] as num).toDouble(),
       lng: (json['lng'] as num).toDouble(),
       description: json['description'] as String?,

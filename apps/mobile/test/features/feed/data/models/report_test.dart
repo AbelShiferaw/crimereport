@@ -143,14 +143,34 @@ void main() {
         expect(json['device_id'], 'device_123');
         expect(json['type'], 'theft');
         expect(json['description'], 'Test description');
-        expect(json['latitude'], 37.7749);
-        expect(json['longitude'], -122.4194);
+        // Backend uses `lat`/`lng`, not `latitude`/`longitude`.
+        expect(json['lat'], 37.7749);
+        expect(json['lng'], -122.4194);
+        expect(json.containsKey('latitude'), isFalse);
+        expect(json.containsKey('longitude'), isFalse);
         expect(json['address'], '123 Test St');
         expect(json['upvotes'], 42);
         expect(json['comment_count'], 10);
         expect(json['status'], 'active');
         expect(json['media'], isList);
         expect(json['created_at'], isA<String>());
+      });
+
+      test('toJson serializes type using apiName (snake_case)', () {
+        final report = Report(
+          id: 'r',
+          deviceId: 'd',
+          type: ReportType.drugActivity,
+          description: null,
+          latitude: 1,
+          longitude: 2,
+          media: const [],
+          upvotes: 0,
+          commentCount: 0,
+          createdAt: now,
+          status: ReportStatus.active,
+        );
+        expect(report.toJson()['type'], 'drug_activity');
       });
 
       test('fromJson roundtrip preserves data', () {
@@ -175,9 +195,11 @@ void main() {
           'id': 'r1',
           'device_id': 'd1',
           'type': 'theft',
-          'description': 'desc',
-          'latitude': 37.0,
-          'longitude': -122.0,
+          // Description is optional in the backend Zod schema; must
+          // accept null.
+          'description': null,
+          'lat': 37.0,
+          'lng': -122.0,
           'address': null,
           'media': null,
           'upvotes': null,
@@ -186,10 +208,28 @@ void main() {
           'status': 'pending',
         };
         final report = Report.fromJson(json);
+        expect(report.description, isNull);
         expect(report.address, isNull);
         expect(report.media, isEmpty);
         expect(report.upvotes, 0);
         expect(report.commentCount, 0);
+      });
+
+      test('fromJson reads lat/lng keys (backend format)', () {
+        final json = {
+          'id': 'r1',
+          'device_id': 'd1',
+          'type': 'drug_activity',
+          'description': 'desc',
+          'lat': 40.7128,
+          'lng': -74.006,
+          'created_at': '2026-02-20T12:00:00.000',
+          'status': 'active',
+        };
+        final report = Report.fromJson(json);
+        expect(report.latitude, 40.7128);
+        expect(report.longitude, -74.006);
+        expect(report.type, ReportType.drugActivity);
       });
     });
 

@@ -32,7 +32,7 @@ class RealtimeFeedNotifier extends StateNotifier<List<Report>> {
           id: event.id,
           deviceId: '',
           type: event.type,
-          description: event.description ?? '',
+          description: event.description,
           latitude: event.lat,
           longitude: event.lng,
           media: [],
