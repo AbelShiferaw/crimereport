@@ -9,8 +9,8 @@ void main() {
     String id = 'media_1',
     MediaType type = MediaType.video,
     int? durationMs = 15000,
-    int width = 1920,
-    int height = 1080,
+    int? width = 1920,
+    int? height = 1080,
   }) {
     return Media(
       id: id,
@@ -60,6 +60,26 @@ void main() {
       test('aspectRatio handles portrait media', () {
         final media = makeMedia(width: 1080, height: 1920);
         expect(media.aspectRatio, closeTo(0.5625, 0.001));
+      });
+
+      test('aspectRatio is null when width is null', () {
+        final media = makeMedia(width: null, height: 1080);
+        expect(media.aspectRatio, isNull);
+      });
+
+      test('aspectRatio is null when height is null', () {
+        final media = makeMedia(width: 1920, height: null);
+        expect(media.aspectRatio, isNull);
+      });
+
+      test('aspectRatio is null when both dimensions are null', () {
+        final media = makeMedia(width: null, height: null);
+        expect(media.aspectRatio, isNull);
+      });
+
+      test('aspectRatio is null for zero height (avoids div by zero)', () {
+        final media = makeMedia(width: 1920, height: 0);
+        expect(media.aspectRatio, isNull);
       });
     });
 
@@ -128,6 +148,24 @@ void main() {
         expect(media.thumbnailUrl, isNull);
         expect(media.durationMs, isNull);
         expect(media.type, MediaType.image);
+      });
+
+      test('fromJson accepts null width/height (DB-nullable columns)', () {
+        final json = {
+          'id': 'm1',
+          'report_id': 'r1',
+          'type': 'image',
+          'url': 'https://example.com/img.jpg',
+          'thumbnail_url': null,
+          'duration_ms': null,
+          'width': null,
+          'height': null,
+          'created_at': '2026-02-20T12:00:00.000',
+        };
+        final media = Media.fromJson(json);
+        expect(media.width, isNull);
+        expect(media.height, isNull);
+        expect(media.aspectRatio, isNull);
       });
     });
 

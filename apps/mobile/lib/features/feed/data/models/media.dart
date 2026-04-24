@@ -8,8 +8,8 @@ class Media {
   final String url;
   final String? thumbnailUrl;
   final int? durationMs;
-  final int width;
-  final int height;
+  final int? width;
+  final int? height;
   final DateTime createdAt;
 
   const Media({
@@ -19,8 +19,8 @@ class Media {
     required this.url,
     this.thumbnailUrl,
     this.durationMs,
-    required this.width,
-    required this.height,
+    this.width,
+    this.height,
     required this.createdAt,
   });
 
@@ -31,8 +31,15 @@ class Media {
   double? get durationSeconds =>
       durationMs != null ? durationMs! / 1000.0 : null;
 
-  /// Aspect ratio (width / height).
-  double get aspectRatio => width / height;
+  /// Aspect ratio (width / height), or null if either dimension is
+  /// missing. The backend allows null width/height because dimensions
+  /// may be unknown until media processing completes.
+  double? get aspectRatio {
+    final w = width;
+    final h = height;
+    if (w == null || h == null || h == 0) return null;
+    return w / h;
+  }
 
   /// Create from JSON (for API responses).
   factory Media.fromJson(Map<String, dynamic> json) => Media(
@@ -42,8 +49,8 @@ class Media {
         url: json['url'] as String,
         thumbnailUrl: json['thumbnail_url'] as String?,
         durationMs: json['duration_ms'] as int?,
-        width: json['width'] as int,
-        height: json['height'] as int,
+        width: json['width'] as int?,
+        height: json['height'] as int?,
         createdAt: DateTime.parse(json['created_at'] as String),
       );
 
