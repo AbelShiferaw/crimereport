@@ -40,8 +40,14 @@ Future<void> setPushNotificationsEnabled(WidgetRef ref, bool enabled) async {
 
   if (!enabled) {
     try {
+      // Backend unregisterDeviceSchema requires `{ device_id }` in the
+      // body. Previous versions sent no body, causing a 400.
+      final deviceId = await ref.read(anonymousIdProvider.future);
       final apiClient = ref.read(apiClientProvider);
-      await apiClient.delete('/api/v1/notifications/unregister');
+      await apiClient.delete(
+        '/api/v1/notifications/unregister',
+        data: {'device_id': deviceId},
+      );
     } catch (e) {
       debugPrint('Failed to unregister notifications: $e');
     }
@@ -64,21 +70,18 @@ Future<void> setNotificationRadius(WidgetRef ref, double radiusKm) async {
   if (!pushEnabled) return;
 
   try {
-    final pushService = ref.read(pushServiceProvider);
-    final token = await pushService.getToken();
-    if (token == null) return;
-
+    // Backend updatePreferencesSchema: PUT /preferences with
+    // { device_id, radius? (int meters, 1000-50000), types?, enabled? }.
+    // Previous code POSTed to /register with a malformed payload.
+    final deviceId = await ref.read(anonymousIdProvider.future);
     final apiClient = ref.read(apiClientProvider);
-    await apiClient.post(
-      '/api/v1/notifications/register',
+    final radiusMeters = (radiusKm * 1000).round().clamp(1000, 50000);
+
+    await apiClient.put(
+      '/api/v1/notifications/preferences',
       data: {
-        'fcm_token': token,
-        'platform': defaultTargetPlatform == TargetPlatform.iOS
-            ? 'ios'
-            : 'android',
-        'lat': null,
-        'lng': null,
-        'radius_km': radiusKm,
+        'device_id': deviceId,
+        'radius': radiusMeters,
       },
     );
   } catch (e) {
