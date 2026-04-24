@@ -90,9 +90,14 @@ class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
     }
   }
 
+  /// A submission is valid only when we have a type, a description, and a
+  /// real GPS fix. The previous default-to-San-Francisco fallback silently
+  /// tagged reports with the wrong coordinates when location failed —
+  /// removed here to avoid corrupting the feed.
   bool get _isFormValid =>
       _selectedType != null &&
-      _descriptionController.text.trim().isNotEmpty;
+      _descriptionController.text.trim().isNotEmpty &&
+      _location != null;
 
   void _submit() {
     if (!_isFormValid) return;
@@ -101,10 +106,11 @@ class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
 
     ref.read(uploadProvider.notifier).submit(
           filePath: widget.filePath,
-          type: _selectedType!.name,
+          // Backend CRIME_TYPES uses snake_case; serialize via apiName.
+          type: _selectedType!.apiName,
           description: _descriptionController.text.trim(),
-          lat: _location?.latitude ?? AppConstants.defaultLatitude,
-          lng: _location?.longitude ?? AppConstants.defaultLongitude,
+          lat: _location!.latitude,
+          lng: _location!.longitude,
           address: null,
         );
   }
@@ -465,6 +471,17 @@ class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
     final isUploading =
         ref.watch(uploadProvider).phase != UploadPhase.idle;
 
+    // Prefer the "Location required" label when type + description are
+    // set but GPS is missing, so the user knows why the button is dim.
+    final bool hasType = _selectedType != null;
+    final bool hasDescription =
+        _descriptionController.text.trim().isNotEmpty;
+    final bool hasLocation = _location != null;
+    final String buttonLabel =
+        (hasType && hasDescription && !hasLocation)
+            ? 'Location required'
+            : 'Submit Report';
+
     return Container(
       padding: EdgeInsets.fromLTRB(
         AppSpacing.md,
@@ -498,7 +515,7 @@ class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
               ),
               const SizedBox(width: AppSpacing.sm),
               Text(
-                'Submit Report',
+                buttonLabel,
                 style: AppTypography.titleSmall.copyWith(
                   color:
                       _isFormValid ? Colors.white : AppColors.textDisabled,
