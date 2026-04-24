@@ -98,7 +98,11 @@ class ApiClient {
   }) =>
       _dio.put<T>(path, data: data);
 
-  Future<Response<T>> delete<T>(String path) => _dio.delete<T>(path);
+  Future<Response<T>> delete<T>(
+    String path, {
+    dynamic data,
+  }) =>
+      _dio.delete<T>(path, data: data);
 }
 
 /// Global [ApiClient] provider.

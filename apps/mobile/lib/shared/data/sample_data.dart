@@ -188,7 +188,7 @@ class SampleData {
     Report(
       id: 'report_006',
       deviceId: 'device_pqr678',
-      type: ReportType.disturbance,
+      type: ReportType.harassment,
       description:
           'Loud argument at the bar spilled onto the street. Yelling and shoving between two groups. Bouncer trying to separate them.',
       latitude: 37.7979,

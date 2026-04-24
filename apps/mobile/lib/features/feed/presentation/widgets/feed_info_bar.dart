@@ -44,9 +44,9 @@ class FeedInfoBar extends StatelessWidget {
         ),
         SizedBox(height: AppSpacing.sm),
 
-        // Description (max 2 lines)
+        // Description (max 2 lines). Backend allows null description.
         Text(
-          report.description,
+          report.description ?? '',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           style: AppTypography.bodyMedium.copyWith(
