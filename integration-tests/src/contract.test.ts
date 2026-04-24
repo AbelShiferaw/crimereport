@@ -247,6 +247,35 @@ describe('Contract: POST /api/v1/reports/:id/upload', () => {
       expect(typeof res.body.expires_in).toBe('number');
     }
   });
+
+  // Regression guard: the Flutter UploadService previously omitted
+  // device_id from the body (the header-only X-Device-ID is ignored by
+  // the route validator), causing every video/image upload to fail with
+  // a 400. Keep this guard to catch future regressions.
+  it('rejects a request missing device_id', async () => {
+    const res = await post(`/api/v1/reports/${reportId}/upload`).send({
+      file_type: 'image',
+      content_type: 'image/jpeg',
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Media upload: POST /api/v1/reports/:id/upload/complete
+// ---------------------------------------------------------------------------
+
+describe('Contract: POST /api/v1/reports/:id/upload/complete', () => {
+  // Regression guard: same device_id issue as /upload — the
+  // uploadCompleteSchema also requires device_id in the body.
+  it('rejects a request missing device_id', async () => {
+    const res = await post(
+      `/api/v1/reports/${reportId}/upload/complete`,
+    ).send({
+      media_key: 'does-not-matter-validation-runs-first',
+    });
+    expect(res.status).toBe(400);
+  });
 });
 
 // ---------------------------------------------------------------------------

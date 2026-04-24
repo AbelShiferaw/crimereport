@@ -89,9 +89,17 @@ class UploadService {
     required String fileType,
     required String contentType,
   }) async {
+    final deviceId = _apiClient.deviceId;
+    if (deviceId == null) {
+      throw StateError(
+        'Cannot request upload URL before anonymous device ID is initialized',
+      );
+    }
+
     final response = await _apiClient.post(
       '/api/v1/reports/$reportId/upload',
       data: {
+        'device_id': deviceId,
         'file_type': fileType,
         'content_type': contentType,
       },
@@ -129,9 +137,19 @@ class UploadService {
     required String reportId,
     required String mediaKey,
   }) async {
+    final deviceId = _apiClient.deviceId;
+    if (deviceId == null) {
+      throw StateError(
+        'Cannot confirm upload before anonymous device ID is initialized',
+      );
+    }
+
     final response = await _apiClient.post(
       '/api/v1/reports/$reportId/upload/complete',
-      data: {'media_key': mediaKey},
+      data: {
+        'device_id': deviceId,
+        'media_key': mediaKey,
+      },
     );
     final data = response.data as Map<String, dynamic>;
     return data['status'] as String;
