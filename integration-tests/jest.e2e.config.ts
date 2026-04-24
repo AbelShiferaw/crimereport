@@ -4,8 +4,8 @@ const config: Config = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src'],
-  testMatch: ['**/*.test.ts', '!**/*.e2e.test.ts'],
-  testTimeout: 30000,
+  testMatch: ['**/*.e2e.test.ts'],
+  testTimeout: 300_000,
   clearMocks: true,
 };
 
