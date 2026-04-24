@@ -29,15 +29,15 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>ReportCrime needs your location to show nearby crime reports on the map.</string>
+	<string>CrimeReport needs your location to show nearby crime reports on the map.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>ReportCrime uses your location to show nearby crime reports and send alerts.</string>
+	<string>CrimeReport uses your location to show nearby crime reports and send alerts.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>ReportCrime needs camera access to capture photos and videos of incidents.</string>
+	<string>CrimeReport needs camera access to capture photos and videos of incidents.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>ReportCrime needs microphone access to record audio with video evidence.</string>
+	<string>CrimeReport needs microphone access to record audio with video evidence.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>ReportCrime needs photo library access to upload existing photos and videos as evidence.</string>
+	<string>CrimeReport needs photo library access to upload existing photos and videos as evidence.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
