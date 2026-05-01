@@ -23,6 +23,7 @@ const TEST_LNG = -74.006;
 const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
 const IMAGE_FIXTURE = path.join(FIXTURES_DIR, 'test-image.jpg');
 const VIDEO_FIXTURE = path.join(FIXTURES_DIR, 'test-video.mp4');
+const VIDEO_H265_FIXTURE = path.join(FIXTURES_DIR, 'test-video-h265.mp4');
 
 function testDeviceId(): string {
   return `e2e-media-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -207,6 +208,68 @@ describe('E2E Media Pipeline', () => {
           deviceId,
           reportId,
           filePath: VIDEO_FIXTURE,
+          fileType: 'video',
+          contentType: 'video/mp4',
+        });
+
+        const status = await waitForTerminalStatus(reportId, 300);
+        expect(status).toBe('active');
+
+        const reportRes = await get(`/api/v1/reports/${reportId}`);
+        expect(reportRes.status).toBe(200);
+        expect(reportRes.body.status).toBe('active');
+        expect(Array.isArray(reportRes.body.media)).toBe(true);
+        expect(reportRes.body.media.length).toBeGreaterThan(0);
+
+        const media = reportRes.body.media[0];
+        expect(typeof media.url).toBe('string');
+        expect(media.url.length).toBeGreaterThan(0);
+        expect(typeof media.thumbnail_url).toBe('string');
+        expect(media.thumbnail_url.length).toBeGreaterThan(0);
+
+        const mediaGet = await axios.get(media.url, {
+          responseType: 'arraybuffer',
+          validateStatus: () => true,
+        });
+        expect(mediaGet.status).toBe(200);
+
+        const thumbGet = await axios.get(media.thumbnail_url, {
+          responseType: 'arraybuffer',
+          validateStatus: () => true,
+        });
+        expect(thumbGet.status).toBe(200);
+
+        const event = await broadcastPromise;
+        expect(event.id).toBe(reportId);
+      },
+      300_000,
+    );
+  });
+
+  describe('Video upload (H.265 / HEVC) end-to-end', () => {
+    let ws: Socket | undefined;
+
+    afterEach(() => {
+      if (ws && ws.connected) {
+        ws.disconnect();
+      }
+      ws = undefined;
+    });
+
+    it(
+      'uploads an H.265 (HEVC) video, transcodes via MediaConvert to H.264, runs Rekognition on the transcoded output, serves via CloudFront, and broadcasts report:new',
+      async () => {
+        const deviceId = testDeviceId();
+        ws = await connectWs(deviceId);
+        ws.emit('subscribe:location', { lat: TEST_LAT, lng: TEST_LNG });
+
+        const reportId = await createReport(deviceId);
+        const broadcastPromise = awaitReportNew(ws, 300_000);
+
+        await uploadMedia({
+          deviceId,
+          reportId,
+          filePath: VIDEO_H265_FIXTURE,
           fileType: 'video',
           contentType: 'video/mp4',
         });
