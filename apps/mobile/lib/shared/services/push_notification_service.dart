@@ -14,7 +14,14 @@ enum NotificationPermissionResult { granted, denied }
 // ---------------------------------------------------------------------------
 
 class PushNotificationService {
-  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  PushNotificationService({
+    FirebaseMessaging? messaging,
+    TargetPlatform Function()? platformOverride,
+  })  : _messaging = messaging ?? FirebaseMessaging.instance,
+        _platformOverride = platformOverride;
+
+  final FirebaseMessaging _messaging;
+  final TargetPlatform Function()? _platformOverride;
 
   final _tokenRefreshController = StreamController<String>.broadcast();
   final _notificationTapController =
@@ -47,6 +54,8 @@ class PushNotificationService {
 
   // ---- Token ----
 
+  /// Returns the FCM token. Use [getDeviceToken] for cross-platform
+  /// registration that returns the APNs token on iOS.
   Future<String?> getToken() async {
     try {
       return await _messaging.getToken();
@@ -54,6 +63,64 @@ class PushNotificationService {
       debugPrint('Failed to get FCM token: $e');
       return null;
     }
+  }
+
+  /// Returns the device-appropriate push token for backend registration:
+  ///
+  /// - On iOS, the raw APNs device token via [FirebaseMessaging.getAPNSToken],
+  ///   retrying every [pollInterval] for up to [maxAttempts] times because
+  ///   APNs registration is asynchronous after app launch and the token may
+  ///   be `null` for the first few hundred milliseconds. Returns `null` if
+  ///   the token never becomes available.
+  /// - On Android (and other platforms including web), the FCM token via
+  ///   [getToken].
+  ///
+  /// AWS SNS expects an APNs hex token for the iOS platform application;
+  /// sending an FCM token there yields an `InvalidParameterException`.
+  Future<String?> getDeviceToken({
+    Duration pollInterval = const Duration(milliseconds: 500),
+    int maxAttempts = 20,
+  }) async {
+    final platform = _currentPlatform();
+    if (platform == TargetPlatform.iOS) {
+      return _getApnsTokenWithRetry(
+        pollInterval: pollInterval,
+        maxAttempts: maxAttempts,
+      );
+    }
+    // Android, web, and any other platform: use the FCM token.
+    return getToken();
+  }
+
+  Future<String?> _getApnsTokenWithRetry({
+    required Duration pollInterval,
+    required int maxAttempts,
+  }) async {
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        final token = await _messaging.getAPNSToken();
+        if (token != null && token.isNotEmpty) {
+          return token;
+        }
+      } catch (e) {
+        debugPrint('Failed to get APNs token (attempt ${attempt + 1}): $e');
+      }
+      if (attempt < maxAttempts - 1) {
+        await Future<void>.delayed(pollInterval);
+      }
+    }
+    debugPrint(
+      'APNs token not available after $maxAttempts attempts; '
+      'skipping push registration for this launch',
+    );
+    return null;
+  }
+
+  TargetPlatform? _currentPlatform() {
+    if (kIsWeb) return null;
+    final override = _platformOverride;
+    if (override != null) return override();
+    return defaultTargetPlatform;
   }
 
   Future<void> deleteToken() async {

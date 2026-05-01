@@ -34,13 +34,19 @@ final initNotificationsProvider = FutureProvider<void>((ref) async {
 
   await pushService.initialize();
 
-  final token = await pushService.getToken();
+  final token = await pushService.getDeviceToken();
   if (token != null) {
     await _registerToken(ref, token);
   }
 
-  pushService.onTokenRefresh.listen((newToken) {
-    _registerToken(ref, newToken);
+  // FCM `onTokenRefresh` only fires when the FCM token rotates. On iOS we
+  // still need to send the APNs token to SNS, so re-resolve via
+  // `getDeviceToken()` instead of trusting the FCM-shaped event payload.
+  pushService.onTokenRefresh.listen((_) async {
+    final refreshed = await pushService.getDeviceToken();
+    if (refreshed != null) {
+      await _registerToken(ref, refreshed);
+    }
   });
 });
 
