@@ -1,0 +1,52 @@
+name: E2E Media Pipeline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *' # daily at 06:00 UTC
+
+concurrency:
+  group: e2e-media-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  e2e-media:
+    name: E2E Media Pipeline
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: integration-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: integration-tests/package-lock.json
+
+      - run: npm ci
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/crimereport-github-deploy
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Get ALB DNS
+        id: alb
+        run: |
+          DNS=$(aws cloudformation describe-stacks \
+            --stack-name CrimeReport-Compute \
+            --query "Stacks[0].Outputs[?OutputKey=='AlbDnsName'].OutputValue" \
+            --output text)
+          echo "dns=$DNS" >> "$GITHUB_OUTPUT"
+
+      - name: Run E2E media pipeline tests
+        env:
+          API_URL: http://${{ steps.alb.outputs.dns }}
+          WS_URL: ws://${{ steps.alb.outputs.dns }}
+        run: npm run test:e2e
