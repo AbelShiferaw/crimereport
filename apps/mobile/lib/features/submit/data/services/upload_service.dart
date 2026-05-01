@@ -35,12 +35,23 @@ class MediaPollResult {
   final String status;
   final String? mediaUrl;
 
-  const MediaPollResult({required this.status, this.mediaUrl});
+  /// Optional classification of why processing failed. Set by the backend
+  /// once the media pipeline error-classification work (Task 3) lands.
+  /// Known values include `flagged_content`, `processing_error`, and
+  /// `unsupported_format`. May be null on success or for older backends.
+  final String? failureReason;
+
+  const MediaPollResult({
+    required this.status,
+    this.mediaUrl,
+    this.failureReason,
+  });
 
   factory MediaPollResult.fromJson(Map<String, dynamic> json) {
     return MediaPollResult(
       status: json['status'] as String,
       mediaUrl: json['media_url'] as String?,
+      failureReason: json['failure_reason'] as String?,
     );
   }
 

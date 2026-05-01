@@ -120,13 +120,17 @@ class _ReportDetailsScreenState extends ConsumerState<ReportDetailsScreen> {
     final uploadState = ref.watch(uploadProvider);
 
     ref.listen<UploadState>(uploadProvider, (previous, next) {
-      if (next.phase == UploadPhase.done) {
+      if (next.phase == UploadPhase.done &&
+          previous?.phase != UploadPhase.done) {
         ref.invalidate(feedReportsProvider);
         Navigator.of(context).popUntil((route) => route.isFirst);
+        final hasInfo = next.infoMessage != null;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Report submitted successfully!'),
-            backgroundColor: AppColors.success,
+            content: Text(
+              next.infoMessage ?? 'Report submitted successfully!',
+            ),
+            backgroundColor: hasInfo ? AppColors.primary : AppColors.success,
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
