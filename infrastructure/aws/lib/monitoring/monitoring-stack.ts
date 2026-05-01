@@ -357,6 +357,29 @@ export class MonitoringStack extends cdk.Stack {
     mediaFailureAlarm.addAlarmAction(snsAction);
     mediaFailureAlarm.addOkAction(snsAction);
 
+    // Distinct alarm for AWS-side pipeline failures (Rekognition unsupported
+    // codec, transient outages, etc.) so ops can tell pipeline outages apart
+    // from user content moderation rejections.
+    const mediaPipelineProcessingErrorsMetric = new cloudwatch.Metric({
+      namespace: emfNamespace,
+      metricName: 'MediaPipelineProcessingErrors',
+      dimensionsMap: { Service: 'media-pipeline' },
+      statistic: 'Sum',
+      period: cdk.Duration.minutes(5),
+    });
+
+    const mediaPipelineProcessingErrorsAlarm = new cloudwatch.Alarm(this, 'MediaPipelineProcessingErrorsAlarm', {
+      alarmName: `${PROJECT_PREFIX}-media-pipeline-processing-errors`,
+      alarmDescription: 'Media pipeline produced AWS-side processing errors (e.g. unsupported codec, Rekognition outage)',
+      metric: mediaPipelineProcessingErrorsMetric,
+      threshold: 1,
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    mediaPipelineProcessingErrorsAlarm.addAlarmAction(snsAction);
+    mediaPipelineProcessingErrorsAlarm.addOkAction(snsAction);
+
     // Application metrics dashboard row
     this.dashboard.addWidgets(
       new cloudwatch.TextWidget({ markdown: '## Application Metrics (EMF)', width: 24, height: 1 }),
@@ -371,6 +394,14 @@ export class MonitoringStack extends cdk.Stack {
       new cloudwatch.GraphWidget({ title: 'WebSocket Connections', left: [wsConnectionsMetric], width: 8 }),
       new cloudwatch.GraphWidget({ title: 'Rate Limit Hits', left: [rateLimitHitsMetric], width: 8 }),
     );
+    this.dashboard.addWidgets(
+      new cloudwatch.GraphWidget({
+        title: 'Media Pipeline Processing Errors',
+        left: [mediaPipelineProcessingErrorsMetric],
+        leftAnnotations: [mediaPipelineProcessingErrorsAlarm.toAnnotation()],
+        width: 24,
+      }),
+    );
 
     // Alarms summary
     this.dashboard.addWidgets(
@@ -384,7 +415,7 @@ export class MonitoringStack extends cdk.Stack {
           redisCpuAlarm, redisMemoryAlarm, redisEvictionsAlarm,
           ecsCpuAlarm, ecsMemoryAlarm,
           alb5xxAlarm, albLatencyAlarm,
-          mediaFailureAlarm,
+          mediaFailureAlarm, mediaPipelineProcessingErrorsAlarm,
         ],
         width: 24,
       }),

@@ -42,6 +42,11 @@ export interface CreateReportInput {
   address?: string;
 }
 
+export type MediaFailureReason =
+  | 'flagged_content'
+  | 'processing_error'
+  | 'unsupported_format';
+
 export interface Media {
   id: string;
   report_id: string;
@@ -50,6 +55,7 @@ export interface Media {
   thumbnail_url: string | null;
   media_key: string | null;
   status: string;
+  failure_reason: MediaFailureReason | null;
   duration_ms: number | null;
   width: number | null;
   height: number | null;

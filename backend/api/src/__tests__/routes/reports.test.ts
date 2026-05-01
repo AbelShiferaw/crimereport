@@ -189,6 +189,7 @@ describe('GET /api/v1/reports/:id', () => {
         thumbnail_url: null,
         media_key: null,
         status: 'active',
+        failure_reason: null,
         duration_ms: null,
         width: 1920,
         height: 1080,

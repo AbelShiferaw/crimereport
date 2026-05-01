@@ -124,8 +124,8 @@ describe('MonitoringStack', () => {
     });
   });
 
-  test('creates 11 alarms total (10 infra + 1 custom app metric)', () => {
-    template.resourceCountIs('AWS::CloudWatch::Alarm', 11);
+  test('creates 12 alarms total (10 infra + 2 custom app metric)', () => {
+    template.resourceCountIs('AWS::CloudWatch::Alarm', 12);
   });
 
   // ── Custom Application Metrics (EMF) ────────────────────
@@ -137,6 +137,17 @@ describe('MonitoringStack', () => {
       EvaluationPeriods: 3,
       MetricName: 'MediaFailureRate',
       Namespace: 'CrimeReport',
+    });
+  });
+
+  test('creates MediaPipelineProcessingErrors alarm distinct from flagged content', () => {
+    template.hasResourceProperties('AWS::CloudWatch::Alarm', {
+      AlarmName: 'crimereport-media-pipeline-processing-errors',
+      Threshold: 1,
+      EvaluationPeriods: 1,
+      MetricName: 'MediaPipelineProcessingErrors',
+      Namespace: 'CrimeReport',
+      Dimensions: [{ Name: 'Service', Value: 'media-pipeline' }],
     });
   });
 
@@ -170,7 +181,7 @@ describe('MonitoringStack', () => {
   test('all alarms have alarm actions configured', () => {
     const alarms = template.findResources('AWS::CloudWatch::Alarm');
     const alarmIds = Object.keys(alarms);
-    expect(alarmIds).toHaveLength(11);
+    expect(alarmIds).toHaveLength(12);
 
     for (const id of alarmIds) {
       const alarm = alarms[id];

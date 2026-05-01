@@ -1,8 +1,8 @@
 import { query } from '../lib/db';
-import { Media, CreateMediaInput } from './types';
+import { Media, CreateMediaInput, MediaFailureReason } from './types';
 
 const MEDIA_COLUMNS =
-  'id, report_id, type, url, thumbnail_url, media_key, status, duration_ms, width, height, created_at';
+  'id, report_id, type, url, thumbnail_url, media_key, status, failure_reason, duration_ms, width, height, created_at';
 
 export async function findByReportId(reportId: string): Promise<Media[]> {
   const { rows } = await query<Media>(
@@ -55,6 +55,16 @@ export async function updateUrls(
 
 export async function updateStatus(mediaKey: string, status: string): Promise<void> {
   await query('UPDATE media SET status = $2 WHERE media_key = $1', [mediaKey, status]);
+}
+
+export async function updateFailure(
+  mediaKey: string,
+  reason: MediaFailureReason,
+): Promise<void> {
+  await query(
+    `UPDATE media SET status = 'failed', failure_reason = $2 WHERE media_key = $1`,
+    [mediaKey, reason],
+  );
 }
 
 export async function deleteByReportId(reportId: string): Promise<number> {
