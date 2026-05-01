@@ -279,6 +279,50 @@ export class MediaStack extends cdk.Stack {
     });
     deleteFlaggedImage.next(imageFlaggedEnd);
 
+    // ── Shared: processing error (system failure) ─────────
+    // Distinct terminal branch for AWS-side failures (e.g. Rekognition
+    // unsupported codec, transient outages). Does NOT delete the
+    // user's upload — the file remains in the uploads bucket so ops
+    // can re-process or investigate. Each entry-point Pass state
+    // captures a `reason` then funnels into a shared CloudWatch
+    // PutMetricData call so the monitoring stack can alarm on it.
+    const emitProcessingErrorMetric = new tasks.CallAwsService(this, 'EmitProcessingErrorMetric', {
+      service: 'cloudwatch',
+      action: 'putMetricData',
+      parameters: {
+        Namespace: 'CrimeReport',
+        MetricData: [
+          {
+            MetricName: 'MediaPipelineProcessingErrors',
+            Value: 1,
+            Unit: 'Count',
+            Dimensions: [{ Name: 'Service', Value: 'media-pipeline' }],
+          },
+        ],
+      },
+      iamResources: ['*'],
+      iamAction: 'cloudwatch:PutMetricData',
+      resultPath: sfn.JsonPath.DISCARD,
+    });
+
+    const processingErrorEnd = new sfn.Pass(this, 'ProcessingErrorEnd', {
+      result: sfn.Result.fromObject({ status: 'PROCESSING_ERROR' }),
+      resultPath: sfn.JsonPath.DISCARD,
+    });
+    emitProcessingErrorMetric.next(processingErrorEnd);
+
+    const buildProcessingError = (id: string, reasonPath: string) => {
+      const pass = new sfn.Pass(this, id, {
+        parameters: {
+          status: 'PROCESSING_ERROR',
+          'reason.$': reasonPath,
+        },
+        resultPath: '$.processingError',
+      });
+      pass.next(emitProcessingErrorMetric);
+      return pass;
+    };
+
     // ── Image path: sync moderation ──────────────────────
     const detectImageLabels = new tasks.CallAwsService(this, 'DetectImageModeration', {
       service: 'rekognition',
@@ -294,6 +338,15 @@ export class MediaStack extends cdk.Stack {
       iamResources: ['*'],
       resultPath: '$.moderation',
     }).addRetry(REKOGNITION_RETRY);
+
+    const imageProcessingError = buildProcessingError(
+      'ImageProcessingError',
+      '$.errorInfo.Cause',
+    );
+    detectImageLabels.addCatch(imageProcessingError, {
+      errors: ['States.ALL'],
+      resultPath: '$.errorInfo',
+    });
 
     const copyToMedia = new tasks.CallAwsService(this, 'CopyImageToMedia', {
       service: 's3',
@@ -391,6 +444,15 @@ export class MediaStack extends cdk.Stack {
       resultPath: '$.videoJob',
     }).addRetry(REKOGNITION_RETRY);
 
+    const videoStartProcessingError = buildProcessingError(
+      'VideoStartProcessingError',
+      '$.errorInfo.Cause',
+    );
+    startVideoModeration.addCatch(videoStartProcessingError, {
+      errors: ['States.ALL'],
+      resultPath: '$.errorInfo',
+    });
+
     const waitForModeration = new sfn.Wait(this, 'WaitForModeration', {
       time: sfn.WaitTime.duration(cdk.Duration.seconds(20)),
     });
@@ -404,6 +466,15 @@ export class MediaStack extends cdk.Stack {
       iamResources: ['*'],
       resultPath: '$.videoResults',
     }).addRetry(REKOGNITION_RETRY);
+
+    const videoPollProcessingError = buildProcessingError(
+      'VideoPollProcessingError',
+      '$.errorInfo.Cause',
+    );
+    getVideoResults.addCatch(videoPollProcessingError, {
+      errors: ['States.ALL'],
+      resultPath: '$.errorInfo',
+    });
 
     // Flagged path for video: delete the transcoded artifacts from media bucket
     // (the raw upload in uploads-bucket auto-expires via lifecycle rule).
@@ -423,13 +494,6 @@ export class MediaStack extends cdk.Stack {
     });
     deleteFlaggedVideo.next(videoFlaggedEnd);
 
-    // Transcoding system error: do NOT mark as flagged content; surface as
-    // a processing error. We don't delete here because the input upload will
-    // auto-expire via the uploads-bucket lifecycle rule.
-    const transcodeFailed = new sfn.Pass(this, 'TranscodeFailed', {
-      result: sfn.Result.fromObject({ status: 'PROCESSING_ERROR', stage: 'transcode' }),
-    });
-
     const videoComplete = new sfn.Pass(this, 'VideoProcessed', {
       result: sfn.Result.fromObject({ status: 'VIDEO_READY' }),
     });
@@ -441,15 +505,56 @@ export class MediaStack extends cdk.Stack {
       ), deleteFlaggedVideo)
       .otherwise(videoComplete);
 
+    // Rekognition reported a system failure (unsupported codec — though this
+    // is much less likely now that we transcode first — internal error,
+    // etc.). Surface as PROCESSING_ERROR rather than treating as flagged
+    // content, and crucially do NOT delete the transcoded artifact so ops
+    // can investigate.
+    const videoJobProcessingError = buildProcessingError(
+      'VideoJobProcessingError',
+      '$.videoResults.StatusMessage',
+    );
+
     const checkVideoJobStatus = new sfn.Choice(this, 'CheckVideoJobStatus')
       .when(sfn.Condition.stringEquals('$.videoResults.JobStatus', 'IN_PROGRESS'), waitForModeration)
       .when(sfn.Condition.stringEquals('$.videoResults.JobStatus', 'SUCCEEDED'), isVideoFlagged)
-      .otherwise(deleteFlaggedVideo);
+      .otherwise(videoJobProcessingError);
 
     const videoModerationPath = startVideoModeration
       .next(waitForModeration)
       .next(getVideoResults)
       .next(checkVideoJobStatus);
+
+    // Transcoding system error (CANCELED, ERROR, or any unexpected status).
+    // Do NOT mark as flagged content — surface as a processing error and
+    // emit the metric. We don't delete here because the input upload
+    // auto-expires via the uploads-bucket lifecycle rule.
+    const transcodeProcessingError = buildProcessingError(
+      'TranscodeProcessingError',
+      '$.transcodeStatus.Job.Status',
+    );
+
+    // Catch Lambda / MediaConvert API failures during the submit and poll
+    // tasks, so a failed Lambda invocation or a GetJob throttle doesn't
+    // bubble up as an execution failure that masquerades as content
+    // moderation in downstream alerts.
+    const transcodeSubmitProcessingError = buildProcessingError(
+      'TranscodeSubmitProcessingError',
+      '$.errorInfo.Cause',
+    );
+    submitTranscode.addCatch(transcodeSubmitProcessingError, {
+      errors: ['States.ALL'],
+      resultPath: '$.errorInfo',
+    });
+
+    const transcodePollProcessingError = buildProcessingError(
+      'TranscodePollProcessingError',
+      '$.errorInfo.Cause',
+    );
+    getTranscodeJob.addCatch(transcodePollProcessingError, {
+      errors: ['States.ALL'],
+      resultPath: '$.errorInfo',
+    });
 
     // MediaConvert job-status terminal values: COMPLETE, CANCELED, ERROR.
     // Anything not COMPLETE before moderation is a processing error.
@@ -459,7 +564,7 @@ export class MediaStack extends cdk.Stack {
         sfn.Condition.stringEquals('$.transcodeStatus.Job.Status', 'SUBMITTED'),
         sfn.Condition.stringEquals('$.transcodeStatus.Job.Status', 'PROGRESSING'),
       ), waitForTranscode)
-      .otherwise(transcodeFailed);
+      .otherwise(transcodeProcessingError);
 
     const videoPath = submitTranscode
       .next(waitForTranscode)

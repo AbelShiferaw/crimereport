@@ -174,6 +174,54 @@ describe('MediaStack', () => {
     });
   });
 
+  test('state machine routes Rekognition video FAILED to processing-error branch (not delete)', () => {
+    const stateMachines = template.findResources('AWS::StepFunctions::StateMachine');
+    const ids = Object.keys(stateMachines);
+    expect(ids).toHaveLength(1);
+    const definitionString = JSON.stringify(stateMachines[ids[0]].Properties.DefinitionString);
+    // CheckVideoJobStatus default branch must point at the new processing
+    // error pass state, NOT at the DeleteFlaggedContent task.
+    expect(definitionString).toContain('VideoJobProcessingError');
+    expect(definitionString).toContain('PROCESSING_ERROR');
+    // Sanity: still has the existing flagged-content branch.
+    expect(definitionString).toContain('DeleteFlaggedContent');
+    expect(definitionString).toContain('ContentFlagged');
+  });
+
+  test('state machine has catch handlers that route to processing-error states', () => {
+    const stateMachines = template.findResources('AWS::StepFunctions::StateMachine');
+    const ids = Object.keys(stateMachines);
+    const definitionString = JSON.stringify(stateMachines[ids[0]].Properties.DefinitionString);
+    // Image moderation catch
+    expect(definitionString).toContain('ImageProcessingError');
+    // Video moderation catches (start + poll)
+    expect(definitionString).toContain('VideoStartProcessingError');
+    expect(definitionString).toContain('VideoPollProcessingError');
+    // Transcode pipeline catches (Lambda submit + MediaConvert poll + status)
+    expect(definitionString).toContain('TranscodeSubmitProcessingError');
+    expect(definitionString).toContain('TranscodePollProcessingError');
+    expect(definitionString).toContain('TranscodeProcessingError');
+  });
+
+  test('state machine emits MediaPipelineProcessingErrors metric on processing errors', () => {
+    const stateMachines = template.findResources('AWS::StepFunctions::StateMachine');
+    const ids = Object.keys(stateMachines);
+    const definitionString = JSON.stringify(stateMachines[ids[0]].Properties.DefinitionString);
+    expect(definitionString).toContain('EmitProcessingErrorMetric');
+    expect(definitionString).toContain('MediaPipelineProcessingErrors');
+    expect(definitionString).toContain('cloudwatch');
+  });
+
+  test('state machine role has cloudwatch:PutMetricData permission', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({ Action: 'cloudwatch:PutMetricData', Effect: 'Allow' }),
+        ]),
+      }),
+    });
+  });
+
   test('uploads bucket does NOT have Lambda notification', () => {
     const resources = template.findResources('Custom::S3BucketNotifications');
     for (const [, resource] of Object.entries(resources)) {
@@ -229,13 +277,18 @@ describe('MediaStack', () => {
       expect(definitionString).toContain('"StringEquals":"SUBMITTED"');
     });
 
-    test('CheckTranscodeStatus default branch routes to TranscodeFailed (no content delete)', () => {
+    test('CheckTranscodeStatus default branch routes to TranscodeProcessingError (no content delete)', () => {
       // Locate the CheckTranscodeStatus state object and assert its Default.
       const checkIdx = definitionString.indexOf('"CheckTranscodeStatus":{');
       expect(checkIdx).toBeGreaterThanOrEqual(0);
       const slice = definitionString.slice(checkIdx, checkIdx + 600);
-      expect(slice).toContain('"Default":"TranscodeFailed"');
-      expect(definitionString).toContain('"TranscodeFailed":{"Type":"Pass","Result":{"status":"PROCESSING_ERROR"');
+      expect(slice).toContain('"Default":"TranscodeProcessingError"');
+      // TranscodeProcessingError emits the metric and the shared
+      // ProcessingErrorEnd Pass produces the terminal PROCESSING_ERROR
+      // payload — assert the chain wires up correctly without a delete.
+      expect(definitionString).toContain('"TranscodeProcessingError":{"Type":"Pass"');
+      expect(definitionString).toContain('"status":"PROCESSING_ERROR"');
+      expect(slice).not.toContain('DeleteFlaggedVideo');
     });
 
     test('StartVideoModeration runs against transcoded media-bucket key', () => {
