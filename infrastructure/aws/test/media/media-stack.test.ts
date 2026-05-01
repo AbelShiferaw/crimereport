@@ -183,4 +183,115 @@ describe('MediaStack', () => {
       }
     }
   });
+
+  // ── H.265 / HEVC pipeline restructure (Task 2) ─────────────────────────────
+  //
+  // After the refactor the video path transcodes BEFORE moderation, so iOS H.265
+  // uploads are converted to H.264 by MediaConvert and then handed to Rekognition
+  // which only supports H.264. The tests below pin the new state machine shape.
+
+  describe('H.265 pipeline (transcode-before-moderation)', () => {
+    let definitionString: string;
+
+    beforeAll(() => {
+      const stateMachines = template.findResources('AWS::StepFunctions::StateMachine');
+      const [, sm] = Object.entries(stateMachines)[0];
+      const def = sm.Properties.DefinitionString;
+      // CDK emits Fn::Join when the definition contains intrinsic refs.
+      const parts: unknown[] = def['Fn::Join'][1];
+      definitionString = parts
+        .map((p) => (typeof p === 'string' ? p : '<<REF>>'))
+        .join('');
+    });
+
+    test('video path starts with SubmitTranscodeJob (transcode FIRST)', () => {
+      const idx = definitionString.indexOf('"DetermineFileType":{');
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const slice = definitionString.slice(idx, idx + 400);
+      // Default branch (non-images/) routes to SubmitTranscodeJob, not StartVideoModeration.
+      expect(slice).toContain('"Default":"SubmitTranscodeJob"');
+      expect(slice).not.toContain('"Default":"StartVideoModeration"');
+    });
+
+    test('SubmitTranscodeJob extracts transcodedKey from Lambda Payload', () => {
+      expect(definitionString).toContain('"transcodedKey.$":"$.Payload.transcodedKey"');
+      expect(definitionString).toContain('"jobId.$":"$.Payload.jobId"');
+    });
+
+    test('GetTranscodeJob polls MediaConvert by job id', () => {
+      expect(definitionString).toContain('aws-sdk:mediaconvert:getJob');
+      expect(definitionString).toContain('"Id.$":"$.transcode.jobId"');
+    });
+
+    test('CheckTranscodeStatus routes COMPLETE → StartVideoModeration, polls otherwise', () => {
+      expect(definitionString).toContain('"StringEquals":"COMPLETE","Next":"StartVideoModeration"');
+      expect(definitionString).toContain('"StringEquals":"PROGRESSING"');
+      expect(definitionString).toContain('"StringEquals":"SUBMITTED"');
+    });
+
+    test('CheckTranscodeStatus default branch routes to TranscodeFailed (no content delete)', () => {
+      // Locate the CheckTranscodeStatus state object and assert its Default.
+      const checkIdx = definitionString.indexOf('"CheckTranscodeStatus":{');
+      expect(checkIdx).toBeGreaterThanOrEqual(0);
+      const slice = definitionString.slice(checkIdx, checkIdx + 600);
+      expect(slice).toContain('"Default":"TranscodeFailed"');
+      expect(definitionString).toContain('"TranscodeFailed":{"Type":"Pass","Result":{"status":"PROCESSING_ERROR"');
+    });
+
+    test('StartVideoModeration runs against transcoded media-bucket key', () => {
+      expect(definitionString).toContain('aws-sdk:rekognition:startContentModeration');
+      expect(definitionString).toContain('"Name.$":"$.transcode.transcodedKey"');
+    });
+
+    test('Flagged video path deletes the transcoded media-bucket file', () => {
+      const idx = definitionString.indexOf('"DeleteFlaggedVideo":{');
+      expect(idx).toBeGreaterThanOrEqual(0);
+      const slice = definitionString.slice(idx, idx + 800);
+      expect(slice).toContain('"Key.$":"$.transcode.transcodedKey"');
+      expect(slice).toContain('aws-sdk:s3:deleteObject');
+    });
+
+    test('Clean video path emits VIDEO_READY (transcoded artifact stays in media bucket)', () => {
+      expect(definitionString).toContain('"VideoProcessed":{"Type":"Pass","Result":{"status":"VIDEO_READY"}');
+    });
+
+    test('image path is unchanged: DetectImageModeration → CopyImageToMedia/DeleteFlaggedContent', () => {
+      expect(definitionString).toContain('aws-sdk:rekognition:detectModerationLabels');
+      expect(definitionString).toContain('"DetectImageModeration"');
+      expect(definitionString).toContain('"IsImageFlagged"');
+      expect(definitionString).toContain('"CopyImageToMedia"');
+      expect(definitionString).toContain('"ImageProcessed"');
+    });
+
+    test('state machine 30 minute timeout preserved', () => {
+      expect(definitionString).toContain('"TimeoutSeconds":1800');
+    });
+  });
+
+  test('state machine role has MediaConvert getJob permission', () => {
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(['mediaconvert:GetJob', 'mediaconvert:DescribeEndpoints']),
+            Effect: 'Allow',
+          }),
+        ]),
+      }),
+    });
+  });
+
+  test('state machine role can read AND delete from media bucket (transcoded artifacts)', () => {
+    // Read needed for Rekognition StartContentModeration on the transcoded file.
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: Match.objectLike({
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith(['s3:GetObject*', 's3:GetBucket*', 's3:List*']),
+            Effect: 'Allow',
+          }),
+        ]),
+      }),
+    });
+  });
 });

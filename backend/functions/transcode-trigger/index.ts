@@ -12,6 +12,9 @@ interface TranscodeInput {
 interface TranscodeOutput {
   jobId: string;
   outputPrefix: string;
+  transcodedKey: string;
+  thumbnailKey: string;
+  previewKey: string;
 }
 
 const MEDIACONVERT_ROLE = process.env.MEDIACONVERT_ROLE_ARN!;
@@ -178,5 +181,13 @@ export const handler = async (event: TranscodeInput): Promise<TranscodeOutput> =
   const jobId = result.Job?.Id ?? 'unknown';
   console.log(`MediaConvert job created: ${jobId} for ${key}`);
 
-  return { jobId, outputPrefix };
+  // MediaConvert names output files as `${destination}${baseName}${NameModifier}.${ext}`.
+  // We expose the keys here so downstream Step Functions tasks (e.g. Rekognition
+  // moderation on the transcoded H.264 file) can address the outputs without
+  // needing to re-derive the filename.
+  const transcodedKey = `${outputPrefix}/${baseName}_720p.mp4`;
+  const thumbnailKey = `${outputPrefix}/${baseName}_thumb.0000000.jpg`;
+  const previewKey = `${outputPrefix}/${baseName}_preview.0000000.jpg`;
+
+  return { jobId, outputPrefix, transcodedKey, thumbnailKey, previewKey };
 };

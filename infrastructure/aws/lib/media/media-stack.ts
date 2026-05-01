@@ -192,7 +192,20 @@ export class MediaStack extends cdk.Stack {
     });
 
     this.uploadsBucket.grantRead(this.stateMachine);
+    this.uploadsBucket.grantDelete(this.stateMachine);
+    this.mediaBucket.grantRead(this.stateMachine);
     this.mediaBucket.grantWrite(this.stateMachine);
+    this.mediaBucket.grantDelete(this.stateMachine);
+
+    // The state machine polls the MediaConvert job submitted by the Lambda.
+    this.stateMachine.addToRolePolicy(
+      new iam.PolicyStatement({
+        sid: 'MediaConvertJobAccess',
+        effect: iam.Effect.ALLOW,
+        actions: ['mediaconvert:GetJob', 'mediaconvert:DescribeEndpoints'],
+        resources: ['*'],
+      }),
+    );
 
     // ── EventBridge Rule: S3 Upload → Step Functions ────────
 
@@ -249,8 +262,8 @@ export class MediaStack extends cdk.Stack {
   }
 
   private buildPipelineDefinition(): sfn.IChainable {
-    // ── Shared: delete flagged content ────────────────────
-    const deleteFlagged = new tasks.CallAwsService(this, 'DeleteFlaggedContent', {
+    // ── Image path: shared flagged-deletion ──────────────
+    const deleteFlaggedImage = new tasks.CallAwsService(this, 'DeleteFlaggedContent', {
       service: 's3',
       action: 'deleteObject',
       parameters: {
@@ -261,10 +274,10 @@ export class MediaStack extends cdk.Stack {
       resultPath: sfn.JsonPath.DISCARD,
     }).addRetry(S3_RETRY);
 
-    const flaggedEnd = new sfn.Pass(this, 'ContentFlagged', {
+    const imageFlaggedEnd = new sfn.Pass(this, 'ContentFlagged', {
       result: sfn.Result.fromObject({ status: 'FLAGGED' }),
     });
-    deleteFlagged.next(flaggedEnd);
+    deleteFlaggedImage.next(imageFlaggedEnd);
 
     // ── Image path: sync moderation ──────────────────────
     const detectImageLabels = new tasks.CallAwsService(this, 'DetectImageModeration', {
@@ -306,20 +319,71 @@ export class MediaStack extends cdk.Stack {
       .when(sfn.Condition.and(
         sfn.Condition.isPresent('$.moderation.ModerationLabels[0]'),
         sfn.Condition.numberGreaterThanEquals('$.moderation.ModerationLabels[0].Confidence', MODERATION_CONFIDENCE_THRESHOLD),
-      ), deleteFlagged)
+      ), deleteFlaggedImage)
       .otherwise(copyToMedia);
 
     const imagePath = detectImageLabels.next(isImageFlagged);
 
-    // ── Video path: async moderation with polling ────────
+    // ── Video path ────────────────────────────────────────
+    //
+    // iPhones (and many Android devices) record H.265 / HEVC by default, which
+    // AWS Rekognition does NOT support. To accept any input codec MediaConvert
+    // can read, we transcode to H.264 FIRST, then run moderation against the
+    // transcoded media-bucket file.
+    //
+    // 1. Submit MediaConvert job (H.265/H.264/HEVC → H.264 + thumbnail + preview)
+    // 2. Poll MediaConvert until COMPLETE / ERROR
+    // 3. Run Rekognition StartContentModeration on the transcoded media-bucket key
+    // 4. Poll Rekognition until SUCCEEDED / FAILED
+    // 5. If flagged: delete transcoded artifacts from media bucket; mark FLAGGED
+    //    If clean:   leave transcoded artifacts in media bucket; mark VIDEO_READY
+    // ─────────────────────────────────────────────────────
+
+    const submitTranscode = new tasks.LambdaInvoke(this, 'SubmitTranscodeJob', {
+      lambdaFunction: this.transcodeLambda,
+      payload: sfn.TaskInput.fromObject({
+        bucket: sfn.JsonPath.stringAt('$.bucket'),
+        key: sfn.JsonPath.stringAt('$.key'),
+      }),
+      // Lambda returns { jobId, outputPrefix, transcodedKey, thumbnailKey, previewKey }
+      resultSelector: {
+        'jobId.$': '$.Payload.jobId',
+        'outputPrefix.$': '$.Payload.outputPrefix',
+        'transcodedKey.$': '$.Payload.transcodedKey',
+        'thumbnailKey.$': '$.Payload.thumbnailKey',
+        'previewKey.$': '$.Payload.previewKey',
+      },
+      resultPath: '$.transcode',
+    });
+
+    const waitForTranscode = new sfn.Wait(this, 'WaitForTranscode', {
+      time: sfn.WaitTime.duration(cdk.Duration.seconds(15)),
+    });
+
+    const getTranscodeJob = new tasks.CallAwsService(this, 'GetTranscodeJob', {
+      service: 'mediaconvert',
+      action: 'getJob',
+      parameters: {
+        Id: sfn.JsonPath.stringAt('$.transcode.jobId'),
+      },
+      iamResources: ['*'],
+      resultPath: '$.transcodeStatus',
+    }).addRetry({
+      errors: ['States.TaskFailed'],
+      interval: cdk.Duration.seconds(5),
+      maxAttempts: 3,
+      backoffRate: 2,
+    });
+
+    // ── Video moderation (against transcoded H.264 in media bucket) ────
     const startVideoModeration = new tasks.CallAwsService(this, 'StartVideoModeration', {
       service: 'rekognition',
       action: 'startContentModeration',
       parameters: {
         Video: {
           S3Object: {
-            Bucket: sfn.JsonPath.stringAt('$.bucket'),
-            Name: sfn.JsonPath.stringAt('$.key'),
+            Bucket: this.mediaBucket.bucketName,
+            Name: sfn.JsonPath.stringAt('$.transcode.transcodedKey'),
           },
         },
       },
@@ -341,36 +405,66 @@ export class MediaStack extends cdk.Stack {
       resultPath: '$.videoResults',
     }).addRetry(REKOGNITION_RETRY);
 
-    const submitTranscode = new tasks.LambdaInvoke(this, 'SubmitTranscodeJob', {
-      lambdaFunction: this.transcodeLambda,
-      payload: sfn.TaskInput.fromObject({
-        bucket: sfn.JsonPath.stringAt('$.bucket'),
-        key: sfn.JsonPath.stringAt('$.key'),
-      }),
-      resultPath: '$.transcode',
+    // Flagged path for video: delete the transcoded artifacts from media bucket
+    // (the raw upload in uploads-bucket auto-expires via lifecycle rule).
+    const deleteFlaggedVideo = new tasks.CallAwsService(this, 'DeleteFlaggedVideo', {
+      service: 's3',
+      action: 'deleteObject',
+      parameters: {
+        Bucket: this.mediaBucket.bucketName,
+        Key: sfn.JsonPath.stringAt('$.transcode.transcodedKey'),
+      },
+      iamResources: [this.mediaBucket.arnForObjects('*')],
+      resultPath: sfn.JsonPath.DISCARD,
+    }).addRetry(S3_RETRY);
+
+    const videoFlaggedEnd = new sfn.Pass(this, 'VideoFlagged', {
+      result: sfn.Result.fromObject({ status: 'FLAGGED' }),
+    });
+    deleteFlaggedVideo.next(videoFlaggedEnd);
+
+    // Transcoding system error: do NOT mark as flagged content; surface as
+    // a processing error. We don't delete here because the input upload will
+    // auto-expire via the uploads-bucket lifecycle rule.
+    const transcodeFailed = new sfn.Pass(this, 'TranscodeFailed', {
+      result: sfn.Result.fromObject({ status: 'PROCESSING_ERROR', stage: 'transcode' }),
     });
 
     const videoComplete = new sfn.Pass(this, 'VideoProcessed', {
-      result: sfn.Result.fromObject({ status: 'VIDEO_TRANSCODING' }),
+      result: sfn.Result.fromObject({ status: 'VIDEO_READY' }),
     });
-    submitTranscode.next(videoComplete);
 
     const isVideoFlagged = new sfn.Choice(this, 'IsVideoFlagged')
       .when(sfn.Condition.and(
         sfn.Condition.isPresent('$.videoResults.ModerationLabels[0]'),
         sfn.Condition.numberGreaterThanEquals('$.videoResults.ModerationLabels[0].Confidence', MODERATION_CONFIDENCE_THRESHOLD),
-      ), deleteFlagged)
-      .otherwise(submitTranscode);
+      ), deleteFlaggedVideo)
+      .otherwise(videoComplete);
 
-    const checkJobStatus = new sfn.Choice(this, 'CheckVideoJobStatus')
+    const checkVideoJobStatus = new sfn.Choice(this, 'CheckVideoJobStatus')
       .when(sfn.Condition.stringEquals('$.videoResults.JobStatus', 'IN_PROGRESS'), waitForModeration)
       .when(sfn.Condition.stringEquals('$.videoResults.JobStatus', 'SUCCEEDED'), isVideoFlagged)
-      .otherwise(deleteFlagged);
+      .otherwise(deleteFlaggedVideo);
 
-    const videoPath = startVideoModeration
+    const videoModerationPath = startVideoModeration
       .next(waitForModeration)
       .next(getVideoResults)
-      .next(checkJobStatus);
+      .next(checkVideoJobStatus);
+
+    // MediaConvert job-status terminal values: COMPLETE, CANCELED, ERROR.
+    // Anything not COMPLETE before moderation is a processing error.
+    const checkTranscodeStatus = new sfn.Choice(this, 'CheckTranscodeStatus')
+      .when(sfn.Condition.stringEquals('$.transcodeStatus.Job.Status', 'COMPLETE'), videoModerationPath)
+      .when(sfn.Condition.or(
+        sfn.Condition.stringEquals('$.transcodeStatus.Job.Status', 'SUBMITTED'),
+        sfn.Condition.stringEquals('$.transcodeStatus.Job.Status', 'PROGRESSING'),
+      ), waitForTranscode)
+      .otherwise(transcodeFailed);
+
+    const videoPath = submitTranscode
+      .next(waitForTranscode)
+      .next(getTranscodeJob)
+      .next(checkTranscodeStatus);
 
     // ── Entry: route by file type ────────────────────────
     return new sfn.Choice(this, 'DetermineFileType')
