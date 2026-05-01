@@ -57,6 +57,7 @@ const fakeMedia = {
   thumbnail_url: null,
   media_key: 'images/r-123/file-1.jpg',
   status: 'pending',
+  failure_reason: null,
   duration_ms: null,
   width: null,
   height: null,
@@ -296,7 +297,7 @@ describe('GET /api/v1/reports/:id/media/status', () => {
     expect(res.body.media[0].status).toBe('active');
   });
 
-  it('marks media as failed when file vanishes from both buckets', async () => {
+  it('marks media as failed (flagged_content) when file vanishes from both buckets', async () => {
     const processingMedia = { ...fakeMedia, status: 'processing' };
 
     mockReport.findById.mockResolvedValueOnce({ ...fakeReport, status: 'processing' });
@@ -304,7 +305,7 @@ describe('GET /api/v1/reports/:id/media/status', () => {
     mockS3.objectExists
       .mockResolvedValueOnce(false)  // not in processed bucket
       .mockResolvedValueOnce(false); // not in uploads bucket either
-    mockMedia.updateStatus.mockResolvedValueOnce(undefined);
+    mockMedia.updateFailure.mockResolvedValueOnce(undefined);
     mockReport.updateStatus.mockResolvedValueOnce({ ...fakeReport, status: 'failed' });
 
     const res = await request(app).get(`${BASE}/r-123/media/status`);
@@ -312,6 +313,37 @@ describe('GET /api/v1/reports/:id/media/status', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('failed');
     expect(res.body.media[0].status).toBe('failed');
+    expect(res.body.media[0].failure_reason).toBe('flagged_content');
+    expect(mockMedia.updateFailure).toHaveBeenCalledWith(
+      'images/r-123/file-1.jpg',
+      'flagged_content',
+    );
+  });
+
+  it('preserves processing_error failure_reason set by the pipeline', async () => {
+    // Simulate the case where the Step Functions pipeline marked the
+    // media as failed with `processing_error` (e.g. unsupported codec)
+    // but left the upload in S3. The route should NOT re-classify it as
+    // flagged_content.
+    const failedMedia = {
+      ...fakeMedia,
+      status: 'failed',
+      failure_reason: 'processing_error' as const,
+    };
+
+    mockReport.findById.mockResolvedValueOnce({ ...fakeReport, status: 'processing' });
+    mockMedia.findByReportId.mockResolvedValueOnce([failedMedia]);
+    mockS3.objectExists
+      .mockResolvedValueOnce(false) // not in processed bucket
+      .mockResolvedValueOnce(true); // still in uploads bucket
+    mockReport.updateStatus.mockResolvedValueOnce({ ...fakeReport, status: 'failed' });
+
+    const res = await request(app).get(`${BASE}/r-123/media/status`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('failed');
+    expect(res.body.media[0].failure_reason).toBe('processing_error');
+    expect(mockMedia.updateFailure).not.toHaveBeenCalled();
   });
 
   it('returns 404 if report does not exist', async () => {

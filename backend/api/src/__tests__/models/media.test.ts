@@ -197,6 +197,65 @@ describe('media model', () => {
     });
   });
 
+  describe('updateFailure', () => {
+    it('sets status=failed and stores the failure_reason', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
+
+      await mediaModel.updateFailure('uploads/r1/abc.jpg', 'processing_error');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('failure_reason = $2'),
+        ['uploads/r1/abc.jpg', 'processing_error'],
+      );
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining("status = 'failed'"),
+        expect.any(Array),
+      );
+    });
+
+    it('supports flagged_content reason', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
+
+      await mediaModel.updateFailure('key', 'flagged_content');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.any(String),
+        ['key', 'flagged_content'],
+      );
+    });
+
+    it('supports unsupported_format reason', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 } as any);
+
+      await mediaModel.updateFailure('key', 'unsupported_format');
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.any(String),
+        ['key', 'unsupported_format'],
+      );
+    });
+  });
+
+  describe('SELECT columns include failure_reason', () => {
+    it('findByReportId selects failure_reason', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
+      await mediaModel.findByReportId('r1');
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('failure_reason'),
+        ['r1'],
+      );
+    });
+
+    it('findByMediaKey selects failure_reason', async () => {
+      mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0 } as any);
+      await mediaModel.findByMediaKey('k');
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('failure_reason'),
+        ['k'],
+      );
+    });
+  });
+
   describe('create — with optional fields', () => {
     it('passes all optional fields when provided', async () => {
       const fakeRow = {

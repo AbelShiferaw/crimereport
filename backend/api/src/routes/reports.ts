@@ -291,8 +291,14 @@ router.get('/:id/media/status', async (req: Request, res: Response) => {
 
       const stillInUploads = await s3.objectExists(config.aws.s3UploadsBucket, processedKey);
       if (!stillInUploads && item.status === 'processing') {
-        await mediaModel.updateStatus(processedKey, 'failed');
-        return { ...item, status: 'failed' };
+        // The upload disappeared from both buckets — almost always
+        // means the Step Functions pipeline deleted it because it
+        // was flagged. Mark with `flagged_content` so the client can
+        // distinguish from AWS-side processing errors (where the
+        // upload remains in the uploads bucket and the pipeline
+        // emits a different terminal status).
+        await mediaModel.updateFailure(processedKey, 'flagged_content');
+        return { ...item, status: 'failed', failure_reason: 'flagged_content' };
       }
 
       return item;
