@@ -150,6 +150,58 @@ void main() {
         expect(media.type, MediaType.image);
       });
 
+      test('fromJson parses failure_reason variants', () {
+        final base = {
+          'id': 'm1',
+          'report_id': 'r1',
+          'type': 'image',
+          'url': 'https://example.com/img.jpg',
+          'thumbnail_url': null,
+          'duration_ms': null,
+          'width': 800,
+          'height': 600,
+          'created_at': '2026-02-20T12:00:00.000',
+        };
+        expect(
+          Media.fromJson({...base, 'failure_reason': 'flagged_content'}).failureReason,
+          MediaFailureReason.flaggedContent,
+        );
+        expect(
+          Media.fromJson({...base, 'failure_reason': 'processing_error'}).failureReason,
+          MediaFailureReason.processingError,
+        );
+        expect(
+          Media.fromJson({...base, 'failure_reason': 'unsupported_format'}).failureReason,
+          MediaFailureReason.unsupportedFormat,
+        );
+        expect(
+          Media.fromJson({...base, 'failure_reason': null}).failureReason,
+          isNull,
+        );
+        expect(
+          Media.fromJson(base).failureReason,
+          isNull,
+        );
+        expect(
+          Media.fromJson({...base, 'failure_reason': 'unknown_value'}).failureReason,
+          isNull,
+        );
+      });
+
+      test('toJson roundtrips failure_reason', () {
+        final media = Media(
+          id: 'm1',
+          reportId: 'r1',
+          type: MediaType.video,
+          url: 'https://example.com/v.mp4',
+          createdAt: now,
+          failureReason: MediaFailureReason.processingError,
+        );
+        expect(media.toJson()['failure_reason'], 'processing_error');
+        final restored = Media.fromJson(media.toJson());
+        expect(restored.failureReason, MediaFailureReason.processingError);
+      });
+
       test('fromJson accepts null width/height (DB-nullable columns)', () {
         final json = {
           'id': 'm1',
